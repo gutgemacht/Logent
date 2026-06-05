@@ -1,0 +1,16 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# logs.lst  –  Paths monitored by the Multi-Agent Log Monitor
+#
+# Rules:
+#   • One path per line
+#   • Lines starting with # are ignored
+#   • Absolute paths only
+#   • A path may be a specific FILE or a DIRECTORY
+#     (directories are watched recursively)
+# ─────────────────────────────────────────────────────────────────────────────
+
+/var/log/syslog
+/var/log/auth.log
+/var/log/nginx/
+# /var/log/myapp/application.log
+/home/sokol/troubleshooter/error.log
