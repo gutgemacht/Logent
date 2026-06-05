@@ -1,26 +1,30 @@
 """
 agents/diagnostic.py
 ====================
-DiagnosticAgent  
+DiagnosticAgent
+
 Receives an error line from a log file and returns a list of **read-only**
 bash commands that gather context about the failure — without making any
 modifications to the system.
-"""  
-from __future__ import annotations  
+"""
+
+from __future__ import annotations
+
 from .base import Agent
-import logging
 
-_logger = logging.getLogger("log_monitor.diagnostic")
-
+# ── System prompt ─────────────────────────────────────────────────────────────
 _SYSTEM_PROMPT = """\
-You are a senior Linux system diagnostic expert.  
+You are a senior Linux system diagnostic expert.
+
 When given an error message from a log file, respond with ONLY a JSON array \
-of read-only diagnostic commands that will help investigate the root cause.  
+of read-only diagnostic commands that will help investigate the root cause.
+
 RESPONSE FORMAT — raw JSON array only (no markdown, no preamble, no explanation):
 [
-{"command": "ls -la /path/to/file", "description": "Check file permissions"},
-{"command": "id -u",                "description": "Check current user UID"}
-]  
+  {"command": "ls -la /path/to/file", "description": "Check file permissions"},
+  {"command": "id -u",                "description": "Check current user UID"}
+]
+
 STRICT RULES:
 1. Return ONLY the JSON array — no text before or after.
 2. Commands MUST be read-only: no sudo changes, no writes, no deletes, \
@@ -30,39 +34,65 @@ no service restarts, no package installs.
 5. If a path appears in the error, include permission/ownership/existence checks for it.
 """
 
+
 class DiagnosticAgent(Agent):
-    """Agent that generates read-only diagnostic commands for log errors."""
-    
-    def __init__(self):
+    """
+    Analyses an error message and returns read-only diagnostic commands
+    to gather environment context.
+    """
+
+    def __init__(self, model: str, base_url: str, timeout: int = 120) -> None:
         super().__init__(
             role="Diagnostic Agent",
             system_prompt=_SYSTEM_PROMPT,
-            model=config.OLLAMA_MODEL,
-            base_url=config.OLLAMA_HOST,
-            timeout=config.LLM_TIMEOUT
+            model=model,
+            base_url=base_url,
+            timeout=timeout,
         )
-    
-    def analyze(self, error_line: str) -> list[dict[str, str]]:
+
+    def analyze(self, error_text: str) -> list[dict[str, str]]:
         """
-        Analyze an error line and return a list of diagnostic commands.
-        Returns list of dicts with "command" and "description" keys.
+        Generate diagnostic commands for the given error line.
+
+        Parameters
+        ----------
+        error_text : str
+            The raw error line captured from the log file.
+
+        Returns
+        -------
+        list[dict[str, str]]
+            List of ``{"command": "...", "description": "..."}`` dicts.
+
+        Raises
+        ------
+        RuntimeError
+            If the Ollama API call fails.
+        ValueError
+            If the model response cannot be parsed as a JSON array.
         """
-        _logger.debug(f"{self.role} analyzing error: {error_line[:50]}")
-        prompt = f"Error line:\n{error_line}\n\nGenerate diagnostic commands."
+        prompt = f"Analyze this log error and return diagnostic commands:\n\nERROR:\n{error_text}"
         raw = self.call(prompt)
-        
+
         try:
             commands = self.parse_json(raw)
         except ValueError as exc:
-            _logger.error(f"{self.role} parse error: {exc}")
             raise ValueError(f"DiagnosticAgent: {exc}") from exc
-        
+
         if not isinstance(commands, list):
-            _logger.error(f"{self.role} expected list, got {type(commands).__name__}")
             raise ValueError(
                 f"DiagnosticAgent expected a JSON array, got {type(commands).__name__}. "
                 f"Response: {raw[:200]!r}"
             )
-        
-        _logger.info(f"{self.role} generated {len(commands)} diagnostic commands")
-        return commands
+
+        # Normalise: ensure every entry has at least 'command'
+        result: list[dict[str, str]] = []
+        for item in commands:
+            if isinstance(item, dict) and "command" in item:
+                result.append(
+                    {
+                        "command": str(item["command"]),
+                        "description": str(item.get("description", "")),
+                    }
+                )
+        return result

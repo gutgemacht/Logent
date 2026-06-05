@@ -1,141 +1,219 @@
 """
 core/orchestrator.py
 ====================
-Pipeline coordinator that manages the flow between Diagnostic Agent and
-Solver Agent. Coordinates command execution and UI interactions.
-"""  
-from __future__ import annotations  
-import logging
-from core.executor import run_command, run_commands_collect
+Orchestrator
+
+The central coordinator that ties every subsystem together:
+
+    LogWatcher → DiagnosticAgent → SolverAgent → UI
+
+Flow
+----
+1.  Start the file watcher in a background thread.
+2.  Block on the error queue in the main thread.
+3.  For each :class:`~core.watcher.ErrorEvent`:
+
+    Block 1 – show error, ask user to Confirm or Ignore.
+    Block 2 – generate diagnostic commands, ask user to Allow or Deny,
+               execute them, collect output.
+    Block 3 – generate fix commands (optionally loop once for extra
+               diagnostics), show colour-coded table, ask user to Apply
+               or Skip, execute one-by-one with status display.
+"""
+
+from __future__ import annotations
+
+import queue
+from pathlib import Path
+
+import config
 from agents.diagnostic import DiagnosticAgent
 from agents.solver import SolverAgent
+from core.executor import run_command, run_commands_collect
+from core.watcher import ErrorEvent, LogWatcher
 from ui.display import Display
-import config
 
-_logger = logging.getLogger("log_monitor.orchestrator")
 
 class Orchestrator:
-    """Coordinates the log error handling pipeline."""
-    
+    """
+    Initialises all subsystems from :mod:`config` and runs the main event
+    loop.  Call :meth:`run` to start.
+    """
+
     def __init__(self) -> None:
+        paths = self._load_paths(config.LOGS_CONFIG_FILE)
+        self._watcher = LogWatcher(paths, config.ERROR_PATTERNS)
+        self._diagnostic = DiagnosticAgent(
+            config.OLLAMA_MODEL, config.OLLAMA_BASE_URL, config.OLLAMA_TIMEOUT
+        )
+        self._solver = SolverAgent(
+            config.OLLAMA_MODEL, config.OLLAMA_BASE_URL, config.OLLAMA_TIMEOUT
+        )
         self._ui = Display()
-        self._diagnostic = DiagnosticAgent()
-        self._solver = SolverAgent()
-        _logger.info("Orchestrator initialized with agents")
-    
+        self._paths = paths
+
+    # ──────────────────────────────────────────────────────────────────
+    # Public API
+    # ──────────────────────────────────────────────────────────────────
+
     def run(self) -> None:
-        """Main loop: wait for errors and process them."""
-        _logger.info("Starting orchestrator main loop")
-        while True:
-            event = self._ui.get_error_event()
-            if not event:
-                continue
-            
-            _logger.info(f"Processing error: {event['line'][:50]} from {event['filepath']}")
-            if self._process_error(event):
-                _logger.info("Error processing complete")
-    
-    def _process_error(self, event: dict) -> bool:
         """
-        Process a single error event through the pipeline.
-        Returns True if event was handled.
+        Start the file watcher and enter the blocking event loop.
+        Exits cleanly on KeyboardInterrupt (Ctrl+C).
         """
-        # Block 1: Show error and ask for confirmation
-        if not self._ui.show_error_panel(event):
-            _logger.info("Error ignored by user")
-            return False
-        
-        # Block 2: Run diagnostic commands
-        self._ui.step_status("Diagnostic Agent: analyzing error")
+        self._watcher.start()
+        self._ui.show_startup(self._paths)
+
         try:
-            _logger.debug(f"{self._diagnostic.role} analyzing error")
-            self._ui.thinking(f"{self._diagnostic.role}: analysing")
-            diag_cmds = self._diagnostic.analyze(event["line"])
-            self._ui.show_diagnostics_panel(diag_cmds)
+            while True:
+                try:
+                    event = self._watcher.error_queue.get(timeout=0.5)
+                    self._handle_error(event)
+                except queue.Empty:
+                    continue  # No new events; keep polling
+        except KeyboardInterrupt:
+            self._ui.show_goodbye()
+        finally:
+            self._watcher.stop()
+
+    # ──────────────────────────────────────────────────────────────────
+    # Pipeline
+    # ──────────────────────────────────────────────────────────────────
+
+    def _handle_error(self, event: ErrorEvent) -> None:
+        """Drive the full three-block pipeline for one error event."""
+
+        # ── Block 1: Error ────────────────────────────────────────────
+        confirmed = self._ui.show_error_panel(event)
+        if not confirmed:
+            self._ui.info("Error ignored.")
+            return
+
+        # ── Block 2: Diagnostic ───────────────────────────────────────
+        self._ui.thinking("Diagnostic Agent is analysing the error…")
+        try:
+            diag_cmds = self._diagnostic.analyze(event.line)
         except (RuntimeError, ValueError) as exc:
             self._ui.error(f"Diagnostic Agent failed: {exc}")
-            return False
-        
-        if not diag_cmds:
-            self._ui.info("No diagnostic commands generated.")
-            return False
-        
+            return
+
         allowed = self._ui.show_diagnostic_panel(diag_cmds)
         if not allowed:
-            self._ui.info("Diagnostic commands skipped.")
-            return False
-        
-        self._ui.step_status("Running diagnostic commands")
-        _logger.debug(f"Executing {len(diag_cmds)} diagnostic commands")
+            self._ui.info("Diagnostics skipped.")
+            return
+
         diag_output = run_commands_collect(
             diag_cmds,
             timeout=config.COMMAND_TIMEOUT,
             max_output_chars=config.MAX_OUTPUT_CHARS,
         )
         self._ui.show_command_output(diag_output)
-        self._ui.info("Diagnostics complete")
-        
-        # Block 3: Generate and apply fixes (with optional re-diagnosis)
+
+        # ── Block 3: Solution (with optional extra-diagnostics loop) ──
         combined_diag = diag_output
-        fix_cmds = []
-        attempt = 0
-        
-        while attempt < 2:  # at most one round of extra diagnostics
-            self._ui.step_status(f"Solving error (attempt {attempt + 1})")
+        solution: list[dict] | dict | None = None
+
+        for attempt in range(2):   # at most one round of extra diagnostics
+            self._ui.thinking(
+                "Solver Agent is generating fix commands…"
+                if attempt == 0
+                else "Solver Agent is re-analysing with additional data…"
+            )
             try:
-                _logger.debug(f"{self._solver.role} solving error")
-                self._ui.thinking(f"{self._solver.role}: generating")
-                solution = self._solver.solve(event["line"], combined_diag)
-                
-                if isinstance(solution, dict) and solution.get("need_more_diagnostics"):
-                    reason = solution.get("reason", "No reason given")
-                    extra_cmds = solution.get("commands", [])
-                    _logger.info(f"Solver requesting more data: {reason}")
-                    
-                    if not extra_cmds:
-                        break
-                    
-                    allowed = self._ui.show_diagnostic_panel(
-                        extra_cmds, title="Additional Diagnostics"
-                    )
-                    if not allowed:
-                        _logger.info("Additional diagnostics skipped.")
-                        break
-                    
-                    extra_output = run_commands_collect(
-                        extra_cmds,
-                        timeout=config.COMMAND_TIMEOUT,
-                        max_output_chars=config.MAX_OUTPUT_CHARS,
-                    )
-                    self._ui.show_command_output(extra_output)
-                    combined_diag += f"\n\nAdditional diagnostics:\n{extra_output}"
-                    attempt += 1
-                    continue
-                
-                if isinstance(solution, list):
-                    fix_cmds = solution
-                else:
-                    fix_cmds = solution.get("commands", [])
-                break  # Got a real fix list; exit loop
+                solution = self._solver.solve(event.line, combined_diag)
             except (RuntimeError, ValueError) as exc:
                 self._ui.error(f"Solver Agent failed: {exc}")
-                return False
-        
+                return
+
+            # Model asked for more diagnostic data → run extra commands
+            if isinstance(solution, dict) and solution.get("need_more_diagnostics"):
+                reason = solution.get("reason", "No reason given")
+                extra_cmds = solution.get("commands", [])
+                self._ui.info(f"Solver needs more information: {reason}")
+
+                if not extra_cmds:
+                    break  # Nothing to run; proceed with what we have
+
+                allowed = self._ui.show_diagnostic_panel(
+                    extra_cmds, title="Additional Diagnostics"
+                )
+                if not allowed:
+                    self._ui.info("Additional diagnostics skipped.")
+                    solution = []  # Treat as empty fix list
+                    break
+
+                extra_output = run_commands_collect(
+                    extra_cmds,
+                    timeout=config.COMMAND_TIMEOUT,
+                    max_output_chars=config.MAX_OUTPUT_CHARS,
+                )
+                self._ui.show_command_output(extra_output)
+                combined_diag += f"\n\nAdditional diagnostics:\n{extra_output}"
+                continue  # Ask solver again with the richer context
+
+            break  # Got a real fix list; exit loop
+
+        # Normalise solution to a list of fix-command dicts
+        if isinstance(solution, list):
+            fix_cmds = solution
+        elif isinstance(solution, dict):
+            fix_cmds = solution.get("commands", [])
+        else:
+            fix_cmds = []
+
         if not fix_cmds:
             self._ui.info("Solver found no applicable fix commands.")
-            return False
-        
-        self._ui.show_solution_panel(fix_cmds)
-        self._ui.step_status("Applying fix commands")
+            return
+
+        approved = self._ui.show_solution_panel(fix_cmds)
+        if not approved:
+            self._ui.info("Fix skipped by user.")
+            return
+
         self._apply_fixes(fix_cmds)
-        
-        return True
-    
+
     def _apply_fixes(self, commands: list[dict]) -> None:
         """Execute fix commands one by one, displaying success/failure after each."""
-        _logger.info(f"Applying {len(commands)} fix command(s)")
+        self._ui.info(f"Applying {len(commands)} fix command(s)…")
         for cmd in commands:
-            self._ui.show_fix_result(cmd["command"], *run_command(
+            success, output = run_command(
                 cmd["command"], timeout=config.COMMAND_TIMEOUT
-            ))
+            )
+            self._ui.show_fix_result(cmd["command"], success, output)
         self._ui.info("Fix pipeline complete.")
+
+    # ──────────────────────────────────────────────────────────────────
+    # Setup helpers
+    # ──────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _load_paths(config_file: str) -> list[str]:
+        """
+        Parse *config_file* (``logs.lst``) and return a list of paths.
+
+        Lines that are blank or start with ``#`` are ignored.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the config file is missing or contains no valid paths.
+        """
+        paths: list[str] = []
+        try:
+            with open(config_file, "r") as fh:
+                for line in fh:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
+                        paths.append(stripped)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"Config file '{config_file}' not found. "
+                f"Create it with one log path per line."
+            ) from exc
+
+        if not paths:
+            raise FileNotFoundError(
+                f"No valid paths found in '{config_file}'. "
+                f"Add at least one absolute file or directory path."
+            )
+        return paths

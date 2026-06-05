@@ -1,19 +1,17 @@
 """
 config.py – Central configuration for the Multi-Agent Log Monitor.
 Edit this file to point to your Ollama instance and tune behaviour.
-"""  
-from __future__ import annotations  # ← CORRECTED FROM **future**
-import logging  # ← Add logging import
+"""
 
-# ── LLM Configuration ────────────────────────────────────────────────────────
-OLLAMA_HOST: str = "http://127.0.0.1:11434"
-OLLAMA_MODEL: str = "llama3.2"
-LLM_TIMEOUT: int = 60
+# ── Ollama settings ───────────────────────────────────────────────────────────
+OLLAMA_BASE_URL: str = "http://192.168.1.100:11434"
+OLLAMA_MODEL: str = "llama3.2"          # Change to any model available on your Ollama
+OLLAMA_TIMEOUT: int = 120               # Seconds to wait for an LLM response
 
-# ── Log monitoring ──────────────────────────────────────────────────────────
+# ── Log monitoring ────────────────────────────────────────────────────────────
 LOGS_CONFIG_FILE: str = "logs.lst"      # One path per line; # = comment
-POLL_INTERVAL: float = 1.0              # Seconds between file checks
 
+# Regex patterns that flag a line as an error (case-insensitive)
 ERROR_PATTERNS: list[str] = [
     r"exception",
     r"\berror\b",
@@ -25,8 +23,6 @@ ERROR_PATTERNS: list[str] = [
     r"permission denied",
 ]
 
+# ── Command execution ─────────────────────────────────────────────────────────
 COMMAND_TIMEOUT: int = 30               # Max seconds per shell command
-MAX_OUTPUT_CHARS: int = 3000            # Truncate long command output
-
-LOG_FILE: str = "log_monitor.log"       # File for debug logging
-LOG_LEVEL: int = logging.DEBUG          # Verbosity: DEBUG, INFO, WARNING, ERROR
+MAX_OUTPUT_CHARS: int = 3000            # Truncate long command output before sending to LLM
