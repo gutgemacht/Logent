@@ -10,6 +10,8 @@ modifications to the system.
 
 from __future__ import annotations
 
+import sys
+from typing import List, Dict, Any
 from .base import Agent
 
 # ── System prompt ─────────────────────────────────────────────────────────────
@@ -49,8 +51,9 @@ class DiagnosticAgent(Agent):
             base_url=base_url,
             timeout=timeout,
         )
+        print("\n[DiagnosticAgent] Initialization complete")
 
-    def analyze(self, error_text: str) -> list[dict[str, str]]:
+    def analyze(self, error_text: str) -> List[Dict[str, str]]:
         """
         Generate diagnostic commands for the given error line.
 
@@ -71,22 +74,36 @@ class DiagnosticAgent(Agent):
         ValueError
             If the model response cannot be parsed as a JSON array.
         """
+        print("\n[DiagnosticAgent] Starting error analysis")
         prompt = f"Analyze this log error and return diagnostic commands:\n\nERROR:\n{error_text}"
-        raw = self.call(prompt)
+        print(f"[DiagnosticAgent] Sending request to model with prompt: {prompt}")
+        try:
+            print("[DiagnosticAgent] Waiting for API response...")
+            raw = self.call(prompt)
+            print("[DiagnosticAgent] Received API response")
+        except Exception as e:
+            print(f"[DiagnosticAgent] Error during API call: {e}", file=sys.stderr)
+            raise
 
+        print("\n[DiagnosticAgent] Parsing JSON response")
         try:
             commands = self.parse_json(raw)
         except ValueError as exc:
-            raise ValueError(f"DiagnosticAgent: {exc}") from exc
-
+            print(f"\n[DiagnosticAgent] Error parsing JSON: {exc}", file=sys.stderr)
+            raise
         if not isinstance(commands, list):
+            print(
+                f"\n[DiagnosticAgent] Invalid response type - expected list got {type(commands).__name__}",
+                file=sys.stderr
+            )
             raise ValueError(
                 f"DiagnosticAgent expected a JSON array, got {type(commands).__name__}. "
                 f"Response: {raw[:200]!r}"
             )
 
         # Normalise: ensure every entry has at least 'command'
-        result: list[dict[str, str]] = []
+        print("\n[DiagnosticAgent] Normalizing command list")
+        result: List[Dict[str, str]] = []
         for item in commands:
             if isinstance(item, dict) and "command" in item:
                 result.append(
@@ -95,4 +112,6 @@ class DiagnosticAgent(Agent):
                         "description": str(item.get("description", "")),
                     }
                 )
+
+        print(f"\n[DiagnosticAgent] Generated {len(result)} diagnostic commands")
         return result

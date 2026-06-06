@@ -5,7 +5,7 @@ Orchestrator
 
 The central coordinator that ties every subsystem together:
 
-    LogWatcher → DiagnosticAgent → SolverAgent → UI
+    LogWatcher â DiagnosticAgent â SolverAgent â UI
 
 Flow
 ----
@@ -13,10 +13,10 @@ Flow
 2.  Block on the error queue in the main thread.
 3.  For each :class:`~core.watcher.ErrorEvent`:
 
-    Block 1 – show error, ask user to Confirm or Ignore.
-    Block 2 – generate diagnostic commands, ask user to Allow or Deny,
+    Block 1 â show error, ask user to Confirm or Ignore.
+    Block 2 â generate diagnostic commands, ask user to Allow or Deny,
                execute them, collect output.
-    Block 3 – generate fix commands (optionally loop once for extra
+    Block 3 â generate fix commands (optionally loop once for extra
                diagnostics), show colour-coded table, ask user to Apply
                or Skip, execute one-by-one with status display.
 """
@@ -52,9 +52,9 @@ class Orchestrator:
         self._ui = Display()
         self._paths = paths
 
-    # ──────────────────────────────────────────────────────────────────
+    # ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     # Public API
-    # ──────────────────────────────────────────────────────────────────
+    # ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
     def run(self) -> None:
         """
@@ -76,21 +76,21 @@ class Orchestrator:
         finally:
             self._watcher.stop()
 
-    # ──────────────────────────────────────────────────────────────────
+    # ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     # Pipeline
-    # ──────────────────────────────────────────────────────────────────
+    # ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
     def _handle_error(self, event: ErrorEvent) -> None:
         """Drive the full three-block pipeline for one error event."""
 
-        # ── Block 1: Error ────────────────────────────────────────────
+        # ââ Block 1: Error ââââââââââââââââââââââââââââââââââââââââââââ
         confirmed = self._ui.show_error_panel(event)
         if not confirmed:
             self._ui.info("Error ignored.")
             return
 
-        # ── Block 2: Diagnostic ───────────────────────────────────────
-        self._ui.thinking("Diagnostic Agent is analysing the error…")
+        # ââ Block 2: Diagnostic âââââââââââââââââââââââââââââââââââââââ
+        self._ui.thinking("Diagnostic Agent is analysing the errorâ¦")
         try:
             diag_cmds = self._diagnostic.analyze(event.line)
         except (RuntimeError, ValueError) as exc:
@@ -109,15 +109,15 @@ class Orchestrator:
         )
         self._ui.show_command_output(diag_output)
 
-        # ── Block 3: Solution (with optional extra-diagnostics loop) ──
+        # ââ Block 3: Solution (with optional extra-diagnostics loop) ââ
         combined_diag = diag_output
         solution: list[dict] | dict | None = None
 
         for attempt in range(2):   # at most one round of extra diagnostics
             self._ui.thinking(
-                "Solver Agent is generating fix commands…"
+                "Solver Agent is generating fix commandsâ¦"
                 if attempt == 0
-                else "Solver Agent is re-analysing with additional data…"
+                else "Solver Agent is re-analysing with additional dataâ¦"
             )
             try:
                 solution = self._solver.solve(event.line, combined_diag)
@@ -125,7 +125,7 @@ class Orchestrator:
                 self._ui.error(f"Solver Agent failed: {exc}")
                 return
 
-            # Model asked for more diagnostic data → run extra commands
+            # Model asked for more diagnostic data â run extra commands
             if isinstance(solution, dict) and solution.get("need_more_diagnostics"):
                 reason = solution.get("reason", "No reason given")
                 extra_cmds = solution.get("commands", [])
@@ -174,7 +174,7 @@ class Orchestrator:
 
     def _apply_fixes(self, commands: list[dict]) -> None:
         """Execute fix commands one by one, displaying success/failure after each."""
-        self._ui.info(f"Applying {len(commands)} fix command(s)…")
+        self._ui.info(f"Applying {len(commands)} fix command(s)â¦")
         for cmd in commands:
             success, output = run_command(
                 cmd["command"], timeout=config.COMMAND_TIMEOUT
@@ -182,9 +182,9 @@ class Orchestrator:
             self._ui.show_fix_result(cmd["command"], success, output)
         self._ui.info("Fix pipeline complete.")
 
-    # ──────────────────────────────────────────────────────────────────
+    # ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     # Setup helpers
-    # ──────────────────────────────────────────────────────────────────
+    # ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
     @staticmethod
     def _load_paths(config_file: str) -> list[str]:

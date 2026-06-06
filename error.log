@@ -1,14 +1,12 @@
-Error: curl is not installed
-Warning-666: Packages are not updated. Do an update.
-Warning-666: Packages are not updated. Do an update. Error
-Warning-666: Packages are not updated. Do an update. Error
-Warning-666: Packages are not updated. Do an update. Error
-Warning-666: Packages are not updated. Do an update. Error
-Warning-666: Packages are not updated. Do an update. Error
-Warning-666: Packages are not updated. Do an update. Error
-Warning-666: Packages are not updated. Do an update. Error
-Warning-666: Packages are not updated. Do an update. Error
-Warning-666: Packages are not updated. Do an update. Error
-Warning-666: Packages are not updated. Do an update. Error
-Warning-666: Packages are not updated. Do an update. Error
-Warning-666: Packages are not updated. Do an update. Error
+Error: no java packages
+Error: no java packages
+Error: no java packages
+Error: no java packages
+Error: Cannot find folder /home//user/test
+Error: Cannot find folder /home/user/test
+Error: No space left in /
+Error: No space left in /var
+Exception: bash.sh start permission denied
+Exception: no RAM free left
+Exception: shutdownt the computer
+Exception: cannot find folder ~/.continue
