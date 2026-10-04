@@ -12,5 +12,4 @@
 /var/log/syslog
 /var/log/auth.log
 /var/log/nginx/
-# /var/log/myapp/application.log
-/home/user/repos/troubleshooter/error.log
+./error.log

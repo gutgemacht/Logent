@@ -1,12 +1,5 @@
-Error: no java packages
-Error: no java packages
-Error: no java packages
-Error: no java packages
-Error: Cannot find folder /home//user/test
-Error: Cannot find folder /home/user/test
-Error: No space left in /
-Error: No space left in /var
-Exception: bash.sh start permission denied
-Exception: no RAM free left
-Exception: shutdownt the computer
-Exception: cannot find folder ~/.continue
+Error: file /etc/resolv.conf has wrong permissions 777
+Error: file /etc/resolv.conf has wrong permissions 777
+Error: file /etc/resolv.conf has wrong file permissions 777. Please correct it now!
+Error: file /etc/resolv.conf has wrong file permissions 777. Please correct it nowecho Error: file /etc/resolv.conf has wrong file permissions 777. Please correct it now! >> error.logecho Error: file /etc/resolv.conf has wrong file permissions 777. Please correct it now! >> error.log
+Error: file /etc/resolv.conf has wrong file permissions 777. Please correct it now!

@@ -7,7 +7,8 @@ Receives the original error text plus the combined output of all diagnostic
 commands, then returns either:
 
   A) A list of fix commands, each annotated with a criticality level
-     ("safe" / "warning" / "danger") for colour-coded display in the UI.
+     ("safe" / "warning" / "danger") for colour-coded display in the UI,
+     and a "sudo" flag for execution.
 
   B) A special dict asking for additional diagnostics, when the available
      information is insufficient to propose a safe fix.
@@ -30,7 +31,8 @@ Raw JSON array only — no markdown, no preamble:
   {
     "command":     "chmod +x /path/to/script.sh",
     "description": "Grant execute permission to the script",
-    "criticality": "warning"
+    "criticality": "warning",
+    "sudo": true
   }
 ]
 
@@ -56,13 +58,15 @@ Use EXACTLY one of these strings:
 2. Order commands from least risky to most risky.
 3. Use targeted, minimal-impact fixes; avoid broad changes.
 4. Use Format B ONLY if you genuinely cannot proceed without extra data.
+5. If a command requires root/superuser privileges, set "sudo": true. Do NOT put the word 'sudo' inside the "command" string itself.
 """
 
 
 class SolverAgent(Agent):
     """
     Proposes fix commands based on the error and diagnostic output.
-    Each command is annotated with a ``criticality`` level for UI colouring.
+    Each command is annotated with a ``criticality`` level for UI colouring
+    and a ``sudo`` flag for execution.
     """
 
     def __init__(self, model: str, base_url: str, timeout: int = 120) -> None:
@@ -91,7 +95,7 @@ class SolverAgent(Agent):
         -------
         list[dict]
             Fix commands when data is sufficient.
-            Each dict has keys ``command``, ``description``, ``criticality``.
+            Each dict has keys ``command``, ``description``, ``criticality``, ``sudo``.
         dict
             ``{"need_more_diagnostics": True, "reason": "...", "commands": [...]}``
             when the model needs more context.
@@ -103,22 +107,47 @@ class SolverAgent(Agent):
         ValueError
             If the response cannot be parsed.
         """
+        # 1. Reinforce the strict JSON instruction at the end of the user prompt
         prompt = (
             f"Original log error:\n{error_text}\n\n"
             f"Diagnostic output:\n{diagnostic_output}\n\n"
-            f"Provide fix commands."
+            f"Provide fix commands. REMEMBER: Return strictly raw JSON only. "
+            f"No conversational preamble, no explanations, no markdown blocks."
         )
         raw = self.call(prompt)
 
+        # 2. Sanitize the response to extract only the JSON structure
+        raw_cleaned = raw.strip()
+        
+        # Find the first opening bracket ([ or {) and the last closing bracket (] or })
+        first_list = raw_cleaned.find('[')
+        first_dict = raw_cleaned.find('{')
+        
+        # Determine the actual start of the JSON
+        if first_list != -1 and first_dict != -1:
+            start_idx = min(first_list, first_dict)
+        else:
+            start_idx = max(first_list, first_dict)
+
+        if start_idx != -1:
+            # Match the closing bracket type based on the opening bracket
+            is_list = raw_cleaned[start_idx] == '['
+            end_idx = raw_cleaned.rfind(']') if is_list else raw_cleaned.rfind('}')
+            
+            if end_idx != -1:
+                # Extract just the JSON portion
+                raw_cleaned = raw_cleaned[start_idx:end_idx+1]
+
         try:
-            result = self.parse_json(raw)
+            # Parse the cleaned string instead of the raw output
+            result = self.parse_json(raw_cleaned)
         except ValueError as exc:
-            raise ValueError(f"SolverAgent: {exc}") from exc
+            raise ValueError(f"SolverAgent: {exc}. Cleaned string was: {raw_cleaned[:200]!r}") from exc
 
         if not isinstance(result, (list, dict)):
             raise ValueError(
                 f"SolverAgent expected JSON array or object, got "
-                f"{type(result).__name__}. Response: {raw[:200]!r}"
+                f"{type(result).__name__}. Response: {raw_cleaned[:200]!r}"
             )
 
         # Normalise list of fix commands
@@ -155,14 +184,25 @@ class SolverAgent(Agent):
         for item in items:
             if not isinstance(item, dict) or not item.get("command"):
                 continue
+            
+            # Parse criticality
             crit = str(item.get("criticality", "safe")).lower()
             if crit not in valid_criticalities:
                 crit = "warning"
+                
+            # Parse sudo flag safely
+            needs_sudo = item.get("sudo", False)
+            if isinstance(needs_sudo, str):
+                needs_sudo = needs_sudo.lower() in ("true", "1", "yes", "y")
+            else:
+                needs_sudo = bool(needs_sudo)
+
             result.append(
                 {
                     "command": str(item["command"]),
                     "description": str(item.get("description", "")),
                     "criticality": crit,
+                    "sudo": needs_sudo,
                 }
             )
         return result

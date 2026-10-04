@@ -1,6 +1,3 @@
 #!/bin/bash
-cd ~/repos/troubleshooter || exit
-
-source venv/bin/activate
-python3 main.py
-deactivate
+export PYTHONPATH=.
+/home/user/miniconda3/envs/myenv/bin/python3 main.py "$1"

@@ -174,17 +174,23 @@ class Orchestrator:
 
     def _apply_fixes(self, commands: list[dict]) -> None:
         """Execute fix commands one by one, displaying success/failure after each."""
-        self._ui.info(f"Applying {len(commands)} fix command(s)â¦")
-        for cmd in commands:
+        self._ui.info(f"Applying {len(commands)} fix command(s)â¦")
+        for cmd_info in commands:
+            # Extract the raw command string
+            cmd_str = cmd_info["command"]
+            
+            # If the solver flagged this as requiring sudo, prepend it
+            if cmd_info.get("sudo"):
+                cmd_str = f"sudo {cmd_str}"
+                
             success, output = run_command(
-                cmd["command"], timeout=config.COMMAND_TIMEOUT
+                cmd_str, timeout=config.COMMAND_TIMEOUT
             )
-            self._ui.show_fix_result(cmd["command"], success, output)
+            
+            # Display the result using the executed command string
+            self._ui.show_fix_result(cmd_str, success, output)
+            
         self._ui.info("Fix pipeline complete.")
-
-    # ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-    # Setup helpers
-    # ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
     @staticmethod
     def _load_paths(config_file: str) -> list[str]:

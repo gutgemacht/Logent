@@ -75,8 +75,17 @@ class DiagnosticAgent(Agent):
             If the model response cannot be parsed as a JSON array.
         """
         print("\n[DiagnosticAgent] Starting error analysis")
-        prompt = f"Analyze this log error and return diagnostic commands:\n\nERROR:\n{error_text}"
+
+        # 1. Update prompt to enforce raw JSON and double-escaping for regex
+        prompt = (
+            f"Analyze this log error and return diagnostic commands:\n\n"
+            f"ERROR:\n{error_text}\n\n"
+            f"REMEMBER: Return strictly raw JSON array only. No preamble. "
+            f"If your commands include backslashes (e.g., for grep regex), "
+            f"you MUST double-escape them in the JSON string (e.g., write \\\\. instead of \\.)."
+        )
         print(f"[DiagnosticAgent] Sending request to model with prompt: {prompt}")
+
         try:
             print("[DiagnosticAgent] Waiting for API response...")
             raw = self.call(prompt)
@@ -86,11 +95,21 @@ class DiagnosticAgent(Agent):
             raise
 
         print("\n[DiagnosticAgent] Parsing JSON response")
+
+        # 2. Sanitize the response to extract only the JSON array
+        raw_cleaned = raw.strip()
+        start_idx = raw_cleaned.find('[')
+        end_idx = raw_cleaned.rfind(']')
+
+        if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+            raw_cleaned = raw_cleaned[start_idx:end_idx+1]
+
         try:
-            commands = self.parse_json(raw)
+            commands = self.parse_json(raw_cleaned)
         except ValueError as exc:
-            print(f"\n[DiagnosticAgent] Error parsing JSON: {exc}", file=sys.stderr)
+            print(f"\n[DiagnosticAgent] Error parsing JSON: {exc}\nCleaned string was: {raw_cleaned[:200]!r}", file=sys.stderr)
             raise
+
         if not isinstance(commands, list):
             print(
                 f"\n[DiagnosticAgent] Invalid response type - expected list got {type(commands).__name__}",
@@ -98,7 +117,7 @@ class DiagnosticAgent(Agent):
             )
             raise ValueError(
                 f"DiagnosticAgent expected a JSON array, got {type(commands).__name__}. "
-                f"Response: {raw[:200]!r}"
+                f"Response: {raw_cleaned[:200]!r}"
             )
 
         # Normalise: ensure every entry has at least 'command'

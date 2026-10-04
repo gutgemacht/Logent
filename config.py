@@ -4,9 +4,8 @@ Edit this file to point to your Ollama instance and tune behaviour.
 """
 
 # ── Ollama settings ───────────────────────────────────────────────────────────
-OLLAMA_BASE_URL: str = "http://192.168.1.100:11434"
-#OLLAMA_MODEL: str = "deepseek-r1:32b"          # Change to any model available on your Ollama
-OLLAMA_MODEL: str = "magistral:latest"
+OLLAMA_BASE_URL: str = "http://localhost:11434"
+OLLAMA_MODEL: str = "codellama:7b"
 OLLAMA_TIMEOUT: int = 300               # Seconds to wait for an LLM response
 
 # ── Log monitoring ────────────────────────────────────────────────────────────
