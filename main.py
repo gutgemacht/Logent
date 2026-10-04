@@ -19,12 +19,13 @@ Prerequisites
 import sys
 import logging
 
-from rich.console import Console
+from ui.display import TimestampConsole
 
 # Set up logging configuration
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='[%(asctime)s] %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S %z'
 )
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 import config  # noqa: F401  (imported to validate it exists)
 from core.orchestrator import Orchestrator
 
-_console = Console()
+_console = TimestampConsole()
 
 def main() -> None:
     try:

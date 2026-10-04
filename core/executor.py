@@ -3,17 +3,19 @@ core/executor.py
 ================
 Thin wrappers around ``subprocess`` for executing shell commands.
 
-All commands run with ``shell=True`` so the full bash feature-set is
-available (pipelines, redirects, etc.).  Output is captured and returned
-as text; stderr is appended on non-zero exit.
+Fix commands support shell syntax. Diagnostic commands are checked against
+a read-only executable allowlist and run as argument lists without a shell.
+Output is captured; stderr is appended on non-zero exit.
 """
 
 from __future__ import annotations
 
 import subprocess
 
+from core.diagnostic_commands import diagnostic_argv, validate_diagnostic_commands
 
-def run_command(command: str, timeout: int = 30) -> tuple[bool, str]:
+
+def run_command(command: str | list[str], timeout: int = 30, *, shell: bool = True) -> tuple[bool, str]:
     """
     Execute a shell command and return ``(success, output)``.
 
@@ -33,7 +35,7 @@ def run_command(command: str, timeout: int = 30) -> tuple[bool, str]:
     try:
         result = subprocess.run(
             command,
-            shell=True,
+            shell=shell,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -85,13 +87,15 @@ def run_commands_collect(
             $ cmd2
             output2
     """
+    validate_diagnostic_commands(commands)
     parts: list[str] = []
     for item in commands:
         cmd = item.get("command", "")
         if not cmd:
             continue
-        _, output = run_command(cmd, timeout=timeout)
+        success, output = run_command(diagnostic_argv(cmd), timeout=timeout, shell=False)
         if len(output) > max_output_chars:
             output = output[:max_output_chars] + "\n[… output truncated …]"
-        parts.append(f"$ {cmd}\n{output}" if output else f"$ {cmd}\n(no output)")
+        status = "success" if success else "failed"
+        parts.append(f"$ {cmd}\nStatus: {status}\n{output or '(no output)'}")
     return "\n\n".join(parts)

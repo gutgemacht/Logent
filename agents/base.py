@@ -45,12 +45,15 @@ class Agent:
         model: str,
         base_url: str,
         timeout: int = 120,
+        *,
+        json_mode: bool = False,
     ) -> None:
         self.role = role
         self.system_prompt = system_prompt
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.json_mode = json_mode
 
     # ──────────────────────────────────────────────────────────────────
     # Public API
@@ -73,6 +76,7 @@ class Agent:
                     {"role": "user", "content": user_message},
                 ],
                 "stream": False,
+                **({"format": "json", "options": {"temperature": 0}} if self.json_mode else {}),
             }
         ).encode("utf-8")
 
@@ -107,8 +111,9 @@ class Agent:
     @staticmethod
     def parse_json(text: str) -> Any:
         """
-        Parse JSON from an LLM response, stripping markdown code fences
-        (```json … ``` or ``` … ```) if present.
+        Parse JSON from an LLM response, allowing markdown fences and prose
+        after a complete object or array. Never recover nested fragments from
+        malformed JSON; callers remain responsible for schema validation.
 
         Parameters
         ----------
@@ -139,6 +144,11 @@ class Agent:
         try:
             return json.loads(text)
         except json.JSONDecodeError as exc:
+            if exc.msg == "Extra data" and text.startswith(("{", "[")):
+                # Decode the complete leading value, rather than slicing at
+                # the last brace (which may belong to explanatory text).
+                value, _ = json.JSONDecoder().raw_decode(text)
+                return value
             raise ValueError(
                 f"Cannot parse LLM response as JSON: {exc}\n"
                 f"Raw (first 300 chars): {text[:300]!r}"

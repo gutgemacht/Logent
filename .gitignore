@@ -1,0 +1,8 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.chroma_db/
+.chroma_models/
+# ONNX runtime session telemetry artifact.
+:memory:.ses

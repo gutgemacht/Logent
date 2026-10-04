@@ -36,13 +36,31 @@ Visual layout (rendered sequentially, not side-by-side):
 
 from __future__ import annotations
 
+from core.diagnostic_commands import validate_diagnostic_commands
+
+from datetime import datetime
+from pathlib import Path
+
 from rich import box
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
+
+class TimestampConsole(Console):
+    """Prefix each non-empty console message, including panels and prompts."""
+
+    def print(self, *objects, **kwargs):
+        if not objects or all(isinstance(obj, str) and not obj.strip() for obj in objects):
+            return super().print(*objects, **kwargs)
+        objects = tuple(obj.lstrip("\n") if isinstance(obj, str) else obj for obj in objects)
+        stamp = Text(datetime.now().astimezone().strftime("[%Y-%m-%d %H:%M:%S %z] "), style="dim")
+        if all(isinstance(obj, (str, Text)) for obj in objects):
+            return super().print(stamp, *objects, **kwargs)
+        return super().print(Group(stamp, *objects), **kwargs)
+
 
 # ── Criticality styling ───────────────────────────────────────────────────────
 _COLOR: dict[str, str] = {
@@ -107,7 +125,7 @@ class Display:
     """
 
     def __init__(self) -> None:
-        self._c = Console(highlight=False)
+        self._c = TimestampConsole(highlight=False)
 
     # ── Generic helpers ───────────────────────────────────────────────
 
@@ -133,8 +151,13 @@ class Display:
         body = Text()
         body.append("Monitoring the following paths:\n\n", style="bold")
         for p in paths:
-            body.append(f"  • {p}\n", style="cyan")
-        body.append("\nPress [bold]Ctrl+C[/bold] to stop.", style="dim")
+            if Path(p).exists():
+                body.append(f"  • {p}\n", style="cyan")
+            else:
+                body.append(f"  • {p} — unavailable, skipped\n", style="yellow")
+        body.append("\nWaiting for new error lines in the available logs.\n", style="bold")
+        body.append("On an error: type 1 or 2, then Enter.\n", style="dim")
+        body.append("Press Ctrl+C to stop.", style="dim")
 
         self._c.print(
             Panel(body, border_style="blue", padding=(1, 2))
@@ -193,6 +216,7 @@ class Display:
 
         Returns True (Allow) or False (Deny).
         """
+        validate_diagnostic_commands(commands)
         self._c.print()
         self._c.print(Rule(f"[bold yellow]🔍   {title}[/bold yellow]"))
 
@@ -230,6 +254,16 @@ class Display:
             option_b="Deny",
             default="2",
         )
+
+    def show_diagnostic_verdict(self, verdict: dict) -> None:
+        self._c.print(Panel(
+            Text(verdict["explanation"]),
+            title=f"Diagnosis: {verdict['status']}",
+            border_style="green" if verdict["status"] == "confirmed" else "yellow",
+        ))
+
+    def ask_research_further(self) -> bool:
+        return _ask(self._c, "Next step", "Research further", "Ignore", default="2")
 
     def show_command_output(self, output: str) -> None:
         """Show the combined stdout of all diagnostic commands."""
@@ -330,3 +364,60 @@ class Display:
         self._c.print(
             Panel(body, title=title_text, border_style=border, padding=(0, 1))
         )
+
+    def show_history(self, summary: dict, related: list[dict]) -> list[dict]:
+        self._c.print(Panel(
+            Text(f"Seen: {summary['seen']} times | Confirmed solved: {summary['solved']} times"),
+            title='Error history', border_style='blue',
+        ))
+        candidates = []
+        groups = [('This error', summary['solutions'])]
+        for match in related:
+            self._c.print(Text(f"Related error (separate statistics): {match['error']} — seen {match['summary']['seen']}, solved {match['summary']['solved']}"))
+            groups.append((f"Related: {match['error']}", match['summary']['solutions']))
+        for label, solutions in groups:
+            for solution in solutions:
+                candidates.append(solution)
+                rate = f"{solution['success_rate']:.0%}" if solution['success_rate'] is not None else 'untested'
+                content = Text(f"{label}\nHelped: {solution['helped']} | Failed: {solution['failed']} | Unsure: {solution['unsure']} | Success: {rate}\n")
+                content.append(solution['notes'] + '\n')
+                for command in solution['commands']:
+                    content.append(f"$ {command['command']}\n")
+                self._c.print(Panel(content, title=f"Saved solution {len(candidates)}"))
+        return candidates
+
+    def choose_history_action(self, candidates: list[dict]) -> tuple[str, dict | None]:
+        self._c.print('Next: [1] Use saved solution  [2] Diagnose  [3] Ignore  [4] Paste my solution', markup=False)
+        choices = ['1', '2', '3', '4'] if candidates else ['2', '3', '4']
+        action = Prompt.ask('Action', choices=choices, default='2', console=self._c)
+        if action == '1':
+            number = Prompt.ask('Solution number', choices=[str(i) for i in range(1, len(candidates) + 1)], console=self._c)
+            return 'reuse', candidates[int(number) - 1]
+        return {'2': 'diagnose', '3': 'ignore', '4': 'paste'}[action], None
+
+    def ask_outcome(self) -> str:
+        self._c.print('Did this solution solve the problem? [1] Yes  [2] No  [3] Unsure', markup=False)
+        answer = Prompt.ask('Outcome', choices=['1', '2', '3'], default='3', console=self._c)
+        return {'1': 'yes', '2': 'no', '3': 'unsure'}[answer]
+
+    def ask_save_solution(self) -> str:
+        self._c.print('Solution history: [1] Save this solution  [2] Skip saving  [3] Paste a different solution', markup=False)
+        answer = Prompt.ask('Save', choices=['1', '2', '3'], default='2', console=self._c)
+        return {'1': 'save', '2': 'skip', '3': 'paste'}[answer]
+
+    def read_custom_solution(self) -> tuple[list[dict], str]:
+        self._c.print('Paste solution notes, one line at a time; finish with .done. This only saves the entry.')
+        notes = self._read_lines()
+        self._c.print('Optional commands, one per line; finish with .done. Commands are saved, not executed now.')
+        commands = [{'command': line, 'description': 'User supplied command', 'criticality': 'warning', 'sudo': False} for line in self._read_lines().splitlines() if line.strip()]
+        if not notes.strip() and not commands:
+            self.info('Empty solution skipped.')
+        return commands, notes
+
+    def _read_lines(self) -> str:
+        lines = []
+        while True:
+            line = Prompt.ask('›', console=self._c, show_default=False)
+            if line.strip() == '.done':
+                return '\n'.join(lines)
+            lines.append(line)

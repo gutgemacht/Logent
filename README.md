@@ -62,7 +62,7 @@ log_monitor/
 
 ```bash
 # 1. Install Python dependencies
-pip install rich watchdog
+.venv/bin/python -m pip install -r requirements.txt
 
 # 2. Configure Ollama endpoint and model
 vim config.py          # set OLLAMA_BASE_URL and OLLAMA_MODEL
@@ -71,7 +71,7 @@ vim config.py          # set OLLAMA_BASE_URL and OLLAMA_MODEL
 vim logs.lst           # one absolute path per line
 
 # 4. Run
-python main.py
+./run.sh
 ```
 
 ## Use-case example
@@ -87,6 +87,67 @@ python main.py
 ## Notes
 
 - Requires Python 3.10+
-- No LangChain, AutoGen, CrewAI or any AI framework — pure stdlib + thin UI/watch libs
+- Uses Rich, watchdog and local ChromaDB; Ollama provides LLM responses.
 - Ollama must be running and reachable at `OLLAMA_BASE_URL`
 - New errors while a pipeline is in progress queue up and are processed after
+
+## Diagnostic verification
+
+Console messages, panel displays, and prompts begin with a timestamp.
+The diagnostic agent first proposes a suspected cause and read-only OS commands.
+After you approve execution, command results (including success/failure) are sent
+back to the diagnostic agent. It returns a confirmed, disproved, or inconclusive
+verdict with an explanation. Only confirmed diagnoses proceed to the solver.
+For disproved or inconclusive diagnoses, choose **Research further** (1) or
+**Ignore** (2). Further research retains previous hypotheses and command results;
+each new command set still requires your approval.
+
+Run locally with `./run.sh`. Choices use 1 or 2 followed by Enter.
+
+Diagnostic commands are restricted to read-only inspection tools. Modifying
+commands such as `chmod` or `chown` are rejected before approval or execution.
+A rejected model plan is retried once with corrective instructions. Diagnostics
+use one command at a time without shell wrappers, pipes, or redirects. Repairs
+are proposed separately by the solver after the diagnosis is confirmed.
+
+## Local solution history
+
+The configured LLM is `qwen3:4b-instruct`. Install it with:
+
+```bash
+ollama pull qwen3:4b-instruct
+```
+
+ChromaDB history is enabled by default (`HISTORY_ENABLED` in `config.py`). Data
+persists in `.chroma_db/`; the small MiniLM embedding model runs on CPU and is
+cached in `.chroma_models/`. The embedding model downloads on the first lookup;
+after that, history search works offline. These directories are excluded from Git.
+
+Each detected error is counted, including errors you ignore. Timestamps and PIDs
+are removed for exact matching; paths and error codes are preserved. Semantically
+related errors appear separately and their statistics are never merged.
+
+Before diagnostics, the history panel shows occurrences and user-confirmed solved
+occurrences. Saved solutions list helped/failed/unsure counts and success rates
+(yes / (yes + no)); unsure outcomes do not affect the percentage. Solutions are
+ranked by confirmed successes, then success rate. Untested entries are labelled.
+You can reuse a saved solution, run diagnostics, ignore, or paste your own fix.
+Reusing commands still requires approval in the solution panel.
+
+After applying a fix, answer Yes / No / Unsure to whether it solved the problem.
+A command's successful exit does not count as a confirmed resolution. Then choose
+to save the solution, skip saving it, or paste a different solution. Occurrence
+and outcome statistics are retained even when you skip saving a new solution;
+reusing an existing solution updates its rating. Pasted solutions are saved but
+never executed automatically. Enter notes and optional commands separately,
+finishing each multiline input with `.done`. An entry marked Unsure has no
+confirmed success until you report one.
+
+If ChromaDB is unavailable, the application reports it and continues diagnostics
+without history. Disable history with `HISTORY_ENABLED = False` if desired.
+
+Run tests:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -v
+```
