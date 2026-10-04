@@ -37,12 +37,16 @@ Visual layout (rendered sequentially, not side-by-side):
 from __future__ import annotations
 
 from core.diagnostic_commands import validate_diagnostic_commands
+from ui.terminal_menu import supported, select_option
+from ui.progress import activity
+import config
 
 from datetime import datetime
 from pathlib import Path
 
 from rich import box
 from rich.console import Console, Group
+from rich.control import Control
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
@@ -53,6 +57,8 @@ class TimestampConsole(Console):
     """Prefix each non-empty console message, including panels and prompts."""
 
     def print(self, *objects, **kwargs):
+        if objects and all(isinstance(obj, Control) for obj in objects):
+            return super().print(*objects, **kwargs)
         if not objects or all(isinstance(obj, str) and not obj.strip() for obj in objects):
             return super().print(*objects, **kwargs)
         objects = tuple(obj.lstrip("\n") if isinstance(obj, str) else obj for obj in objects)
@@ -86,27 +92,31 @@ def _ask(
     option_b: str,
     key_a: str = "1",
     key_b: str = "2",
-    default: str = "2",
+    default: str | None = "2",
 ) -> bool:
     """
     Display two labelled options and read a single-key choice.
 
     Returns True if the user chose *key_a*, False for *key_b*.
-    Pressing Enter without input uses *default*.
+    Pressing Enter without input uses *default*, or asks again if it is None.
     """
     console.print()
+    hint = f"Enter = {option_b if default == key_b else option_a}" if default is not None else "Choose 1 or 2 explicitly"
     # Show the two options with colour-coded keys
     console.print(
         f"  [bold]{label}:[/bold]  "
-        f"[[bold green]{key_a}[/bold green]] {option_a}"
+        f"[[bold green]{key_a}[/bold green]] [bold]{option_a}[/bold]"
         f"    "
-        f"[[bold {'yellow' if default == key_b else 'red'}]{key_b}[/bold {'yellow' if default == key_b else 'red'}]] {option_b}"
-        f"  [dim](Enter = {option_b if default == key_b else option_a})[/dim]"
+        f"[[bold {'yellow' if default == key_b else 'red'}]{key_b}[/bold {'yellow' if default == key_b else 'red'}]] [bold]{option_b}[/bold]"
+        f"  [dim]({hint})[/dim]"
     )
+    if config.ARROW_MENUS and supported(console):
+        chosen = select_option(console, label, [(key_a, option_a), (key_b, option_b)], "Waiting for your decision", default)
+        return chosen == key_a
     chosen = Prompt.ask(
         "  [bold dim]›[/bold dim]",
         choices=[key_a, key_b],
-        default=default,
+        **({"default": default} if default is not None else {}),
         show_choices=False,
         show_default=False,
         console=console,
@@ -126,6 +136,7 @@ class Display:
 
     def __init__(self) -> None:
         self._c = TimestampConsole(highlight=False)
+        self._status = "Monitoring"
 
     # ── Generic helpers ───────────────────────────────────────────────
 
@@ -156,7 +167,7 @@ class Display:
             else:
                 body.append(f"  • {p} — unavailable, skipped\n", style="yellow")
         body.append("\nWaiting for new error lines in the available logs.\n", style="bold")
-        body.append("On an error: type 1 or 2, then Enter.\n", style="dim")
+        body.append("Use ↑/↓ and Enter to choose (or numbered choices in a basic terminal).\n", style="dim")
         body.append("Press Ctrl+C to stop.", style="dim")
 
         self._c.print(
@@ -203,7 +214,7 @@ class Display:
             label="Action",
             option_a="Confirm (start analysis)",
             option_b="Ignore",
-            default="2",
+            default=None,
         )
 
     # ── Block 2: Diagnostics ──────────────────────────────────────────
@@ -229,13 +240,13 @@ class Display:
         )
         table.add_column("#", style="dim", width=3, justify="right")
         table.add_column("Command", style="cyan", no_wrap=True)
-        table.add_column("Description", style="white")
+        table.add_column("Purpose / expected result", style="white")
 
         for idx, cmd in enumerate(commands, start=1):
             table.add_row(
                 str(idx),
                 cmd.get("command", ""),
-                cmd.get("description", ""),
+                cmd.get("description", "") + ("\nExpected: " + cmd["expected_result"] if cmd.get("expected_result") else ""),
             )
 
         self._c.print(
@@ -256,8 +267,13 @@ class Display:
         )
 
     def show_diagnostic_verdict(self, verdict: dict) -> None:
+        body = Text(verdict["explanation"])
+        for item in verdict.get('observations', []):
+            body.append(f"\nEvidence: $ {item['command']}\nObserved: {item['result']}\nSupports: {item['supports']}")
+        if verdict.get('uncertainties'):
+            body.append('\nUnknown: ' + '; '.join(verdict['uncertainties']), style='yellow')
         self._c.print(Panel(
-            Text(verdict["explanation"]),
+            body,
             title=f"Diagnosis: {verdict['status']}",
             border_style="green" if verdict["status"] == "confirmed" else "yellow",
         ))
@@ -266,12 +282,12 @@ class Display:
         return _ask(self._c, "Next step", "Research further", "Ignore", default="2")
 
     def show_command_output(self, output: str) -> None:
-        """Show the combined stdout of all diagnostic commands."""
+        """Show exactly the selected command evidence transmitted to the LLM."""
         self._c.print()
         self._c.print(
             Panel(
                 Text(output, style="dim"),
-                title="[dim]Diagnostic Output[/dim]",
+                title="[dim]Diagnostic evidence sent to LLM (omissions marked)[/dim]",
                 border_style="dim",
                 padding=(0, 1),
             )
@@ -316,7 +332,7 @@ class Display:
             table.add_row(
                 str(idx),
                 Text(cmd.get("command", ""), style=color),
-                Text(cmd.get("description", ""), style="dim"),
+                Text(cmd.get("description", "") + ("\nExpected: " + cmd["expected_result"] if cmd.get("expected_result") else ""), style="dim"),
                 Text(f"{icon} {crit}", style=f"bold {color}"),
             )
 
@@ -374,35 +390,45 @@ class Display:
         groups = [('This error', summary['solutions'])]
         for match in related:
             self._c.print(Text(f"Related error (separate statistics): {match['error']} — seen {match['summary']['seen']}, solved {match['summary']['solved']}"))
-            groups.append((f"Related: {match['error']}", match['summary']['solutions']))
+            for solution in match['summary']['solutions']:
+                self._c.print(Panel(
+                    Text(f"Historical context only — this fix is not verified for the current error.\n"
+                         f"Helped: {solution['helped']} | Failed: {solution['failed']}\n{solution['notes']}"),
+                    title='Related history (not available for direct reuse)', border_style='dim',
+                ))
         for label, solutions in groups:
             for solution in solutions:
-                candidates.append(solution)
+                eligible = not solution.get('obsolete') and solution.get('applicable', True)
+                if eligible:
+                    candidates.append(solution)
                 rate = f"{solution['success_rate']:.0%}" if solution['success_rate'] is not None else 'untested'
                 content = Text(f"{label}\nHelped: {solution['helped']} | Failed: {solution['failed']} | Unsure: {solution['unsure']} | Success: {rate}\n")
                 content.append(solution['notes'] + '\n')
+                content.append(f"Last worked: {solution.get('last_worked') or 'never'}\n")
+                if not eligible:
+                    content.append('Not reusable: ' + ('obsolete' if solution.get('obsolete') else solution.get('applicability_reason', 'conditions not verified')) + '\n', style='yellow')
                 for command in solution['commands']:
                     content.append(f"$ {command['command']}\n")
-                self._c.print(Panel(content, title=f"Saved solution {len(candidates)}"))
+                self._c.print(Panel(content, title=f"Saved solution {len(candidates)}" if eligible else "Historical solution (diagnose again)"))
         return candidates
 
     def choose_history_action(self, candidates: list[dict]) -> tuple[str, dict | None]:
-        self._c.print('Next: [1] Use saved solution  [2] Diagnose  [3] Ignore  [4] Paste my solution', markup=False)
-        choices = ['1', '2', '3', '4'] if candidates else ['2', '3', '4']
-        action = Prompt.ask('Action', choices=choices, default='2', console=self._c)
+        self._c.print(Text('Next: [1] Use saved solution  [2] Diagnose  [3] Ignore  [4] Paste my solution  [5] Manage history', style='bold'))
+        choices = ['1', '2', '3', '4', '5'] if candidates else ['2', '3', '4', '5']
+        action = self.choose('Action', {key: {'1': 'Use saved solution', '2': 'Diagnose', '3': 'Ignore', '4': 'Paste my solution', '5': 'Manage history'}[key] for key in choices}, default='2')
         if action == '1':
-            number = Prompt.ask('Solution number', choices=[str(i) for i in range(1, len(candidates) + 1)], console=self._c)
+            number = self.choose('Solution number', {str(i): item['notes'][:80] for i, item in enumerate(candidates, 1)})
             return 'reuse', candidates[int(number) - 1]
-        return {'2': 'diagnose', '3': 'ignore', '4': 'paste'}[action], None
+        return {'2': 'diagnose', '3': 'ignore', '4': 'paste', '5': 'manage'}[action], None
 
     def ask_outcome(self) -> str:
-        self._c.print('Did this solution solve the problem? [1] Yes  [2] No  [3] Unsure', markup=False)
-        answer = Prompt.ask('Outcome', choices=['1', '2', '3'], default='3', console=self._c)
+        self._c.print(Text('Did this solution solve the problem? [1] Yes  [2] No  [3] Unsure', style='bold'))
+        answer = self.choose('Outcome', {'1': 'Yes', '2': 'No', '3': 'Unsure'}, default='3')
         return {'1': 'yes', '2': 'no', '3': 'unsure'}[answer]
 
     def ask_save_solution(self) -> str:
-        self._c.print('Solution history: [1] Save this solution  [2] Skip saving  [3] Paste a different solution', markup=False)
-        answer = Prompt.ask('Save', choices=['1', '2', '3'], default='2', console=self._c)
+        self._c.print(Text('Solution history: [1] Save this solution  [2] Skip saving  [3] Paste a different solution', style='bold'))
+        answer = self.choose('Save', {'1': 'Save this solution', '2': 'Skip saving', '3': 'Paste a different solution'}, default='2')
         return {'1': 'save', '2': 'skip', '3': 'paste'}[answer]
 
     def read_custom_solution(self) -> tuple[list[dict], str]:
@@ -421,3 +447,70 @@ class Display:
             if line.strip() == '.done':
                 return '\n'.join(lines)
             lines.append(line)
+
+    def choose(self, title: str, options: dict[str, str], default=None) -> str:
+        self._status = "Waiting for your decision"
+        if config.ARROW_MENUS and supported(self._c):
+            return select_option(self._c, title, list(options.items()), self._status, default)
+        return Prompt.ask(title, choices=list(options), **({"default": default} if default is not None else {}), console=self._c)
+
+    def set_status(self, status: str) -> None:
+        self._status = status
+
+    def activity(self, message: str):
+        self.set_status(message)
+        return activity(self._c, message)
+
+    def ask_retry(self) -> bool:
+        self._c.print(Text('Request interrupted or failed: [1] Retry  [2] Cancel this error', style='bold'))
+        return self.choose('Request', {'1': 'Retry', '2': 'Cancel this error'}, default='2') == '1'
+
+    def show_structured_diagnosis(self, error: str, plan: dict, facts: dict) -> None:
+        import json
+        self._c.print(Panel(Text(
+            'Reported symptom: ' + error + '\nSuspected cause: ' + plan['hypothesis']
+            + '\nCurrent filesystem facts:\n' + json.dumps(facts, indent=2)
+            + '\nConclusion: pending diagnostic evidence'
+        ), title='Structured diagnosis', border_style='cyan'))
+
+    def show_verification(self, verdict: dict) -> None:
+        self._c.print(Panel(Text(verdict['explanation']), title='After-fix verification: ' + verdict['status'], border_style='green' if verdict['status'] == 'disproved' else 'yellow'))
+
+    def manage_history(self, history) -> None:
+        while True:
+            entries = history.list_solutions()
+            for i, entry in enumerate(entries, 1):
+                self._c.print(Text(f"[{i}] {entry['notes']} | {'obsolete' if entry.get('obsolete') else 'active'} | helped: {entry.get('helped', 0)} | last worked: {entry.get('last_worked') or 'never'} | machine: {entry.get('machine_id', 'legacy/unscoped')}", style='bold'))
+            if not entries:
+                self.info('No saved solutions.')
+                return
+            action = self.choose('History', {'1': 'Edit / add notes', '2': 'Mark obsolete', '3': 'Delete', '4': 'Back', '5': 'View details'}, default='4')
+            if action == '4':
+                return
+            number = self.choose('Entry', {str(i): entry['notes'][:80] for i, entry in enumerate(entries, 1)})
+            entry = entries[int(number) - 1]
+            if action == '5':
+                import json
+                self._c.print(Panel(Text(json.dumps(entry, indent=2)), title='Saved solution details'))
+            elif action == '1':
+                self.info('Editing creates a new untested version; the original history is preserved. Leave commands empty to keep existing commands.')
+                commands, notes = self.read_custom_solution()
+                if not commands and not notes.strip():
+                    continue
+                if not commands:
+                    commands = entry['commands']
+                history.edit_solution(entry['id'], commands, notes or entry['notes'])
+            elif action == '2':
+                history.set_obsolete(entry['id'])
+            elif self.choose('Delete this saved solution?', {'1': 'Delete', '2': 'Keep'}, default='2') == '1':
+                history.delete_solution(entry['id'])
+
+    def ask_export(self) -> bool:
+        self._c.print(Text('Troubleshooting report: [1] Export Markdown and JSON  [2] Skip', style='bold'))
+        return self.choose('Report', {'1': 'Export', '2': 'Skip'}, default='2') == '1'
+
+    def monitoring(self, source):
+        from rich.live import Live
+        return Live(get_renderable=lambda: Text(
+            f"{datetime.now().astimezone():%H:%M:%S} | Monitoring | {source.qsize()} queued errors | Ctrl+C stops",
+            style='bold blue'), console=self._c, refresh_per_second=2, transient=True)

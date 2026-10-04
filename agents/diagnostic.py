@@ -3,17 +3,25 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 from .base import Agent
+from core.error_context import reported_paths
 from core.diagnostic_commands import READ_ONLY_COMMANDS, validate_diagnostic_commands
 
 logger = logging.getLogger(__name__)
 _SYSTEM_PROMPT = """You are a Linux diagnostic expert. Return only raw JSON objects.
 For a PLAN request return:
 {"hypothesis": "suspected problem, or insufficient evidence",
- "commands": [{"command": "read-only OS command", "description": "what it checks"}]}
-Suggest targeted commands to test the hypothesis. Do not claim it is confirmed yet.
+ "commands": [{"command": "read-only OS command", "description": "why it is relevant", "expected_result": "what would confirm or disprove the hypothesis"}]}
+Suggest targeted commands to test the CURRENT error. Do not claim it is confirmed yet.
+Missing files and incorrect permissions are different problems, even at the same path.
+First check whether the reported target exists (follow symlinks); only then assess its permissions.
+Past solutions are reference data, not evidence that the current problem has the same cause.
+For a missing-file report, evidence of nonexistence supports that report; permissions
+cannot be checked on an absent target. A failure to inspect due to denied access is inconclusive.
 For a VERIFY request return:
-{"status": "confirmed|disproved|inconclusive", "explanation": "evidence-based conclusion"}
+{"status": "confirmed|disproved|inconclusive", "explanation": "evidence-based conclusion",
+ "observations": [{"command": "exact command already executed", "result": "observed output", "supports": "what this demonstrates"}], "uncertainties": ["facts still unknown"]}
 Use the original error, hypothesis, and command results. Failed commands, empty results,
 or missing tools alone cannot disprove a problem. Use inconclusive when evidence is insufficient.
 For further research, consider all previous evidence and test alternative explanations.
@@ -41,6 +49,12 @@ class DiagnosticAgent(Agent):
             raw = self.call(prompt)
             try:
                 plan = self._parse_plan(self.parse_json(raw))
+                # Gather current filesystem facts even if the LLM overlooks
+                # the distinction between a missing target and its permissions.
+                checks = [{"command": f"stat -L -- {shlex.quote(path)}", "description": "Check target existence and current permissions (follow symlinks)", "expected_result": "Metadata if the target exists; no-such-file if absent; access-denied is inconclusive"}
+                          for path in reported_paths(error_text)]
+                existing = {command["command"] for command in plan["commands"]}
+                plan["commands"] = [check for check in checks if check["command"] not in existing] + plan["commands"]
                 validate_diagnostic_commands(plan["commands"])
             except ValueError as exc:
                 if attempt:
@@ -65,6 +79,8 @@ class DiagnosticAgent(Agent):
         for command in commands:
             if not isinstance(command, dict) or not isinstance(command.get("command"), str) or not command["command"].strip():
                 raise ValueError("Each diagnostic command must be a non-empty string")
+            if not isinstance(command.get("expected_result", ""), str):
+                raise ValueError("Diagnostic expected results must be strings")
             if not isinstance(command.get("description", ""), str):
                 raise ValueError("Diagnostic command descriptions must be strings")
         return plan
@@ -74,7 +90,6 @@ class DiagnosticAgent(Agent):
         return self.diagnose(error_text)["commands"]
 
     def verify(self, error_text: str, hypothesis: str, evidence: str) -> dict:
-        logger.info("Verifying diagnostic results")
         prompt = (
             "VERIFY: Confirm or disprove the suspected problem using the evidence.\n"
             + json.dumps({"error": error_text, "hypothesis": hypothesis, "evidence": evidence})
@@ -82,7 +97,11 @@ class DiagnosticAgent(Agent):
         for attempt in range(2):
             raw = self.call(prompt)
             try:
-                return self._parse_verdict(self.parse_json(raw))
+                result = self._parse_verdict(self.parse_json(raw))
+                for observation in result.get('observations', []):
+                    if '$ ' + observation['command'] + '\n' not in evidence:
+                        raise ValueError('Verdict cites a command that was not executed')
+                return result
             except ValueError as exc:
                 if attempt:
                     raise ValueError(f"Diagnostic verification response rejected after two attempts: {exc}") from exc
@@ -99,4 +118,10 @@ class DiagnosticAgent(Agent):
             raise ValueError("Diagnostic verdict must be confirmed, disproved, or inconclusive")
         if not isinstance(result.get("explanation"), str) or not result["explanation"].strip():
             raise ValueError("Diagnostic verdict must include an explanation")
+        observations = result.get('observations', [])
+        if not isinstance(observations, list) or any(not isinstance(item, dict) or any(not isinstance(item.get(field), str) for field in ('command', 'result', 'supports')) for item in observations):
+            raise ValueError('Verdict observations must link commands, results and conclusions')
+        uncertainties = result.get('uncertainties', [])
+        if not isinstance(uncertainties, list) or any(not isinstance(item, str) for item in uncertainties):
+            raise ValueError('Verdict uncertainties must be a list of strings')
         return result

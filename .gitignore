@@ -6,3 +6,4 @@ __pycache__/
 .chroma_models/
 # ONNX runtime session telemetry artifact.
 :memory:.ses
+reports/

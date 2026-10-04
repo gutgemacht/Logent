@@ -91,6 +91,8 @@ class Agent:
             with urllib.request.urlopen(request, timeout=self.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return data["message"]["content"]
+        except TimeoutError as exc:
+            raise RuntimeError(f"[{self.role}] Ollama request timed out after {self.timeout}s") from exc
         except urllib.error.HTTPError as exc:
             raise RuntimeError(
                 f"[{self.role}] Ollama HTTP {exc.code}: {exc.reason}"

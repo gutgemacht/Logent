@@ -31,6 +31,7 @@ Raw JSON array only — no markdown, no preamble:
   {
     "command":     "chmod +x /path/to/script.sh",
     "description": "Grant execute permission to the script",
+    "expected_result": "The owner can execute the script",
     "criticality": "warning",
     "sudo": true
   }
@@ -55,6 +56,11 @@ Use EXACTLY one of these strings:
 
 ━━━ STRICT RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Return ONLY the JSON — nothing else.
+   Solve the current confirmed diagnosis, not a historical error sharing its path.
+   A missing file is not a permissions problem: chmod/chown cannot restore a missing file.
+   Before suggesting permission changes, current diagnostics must show the target exists
+   and that the permissions are actually incorrect. Check symlink targets too.
+   Do not invent file contents or restore from an unverified backup; request more data if needed.
 2. Order commands from least risky to most risky.
 3. Use targeted, minimal-impact fixes; avoid broad changes.
 4. Use Format B ONLY if you genuinely cannot proceed without extra data.
@@ -201,6 +207,7 @@ class SolverAgent(Agent):
                 {
                     "command": str(item["command"]),
                     "description": str(item.get("description", "")),
+                    "expected_result": str(item.get("expected_result", "")),
                     "criticality": crit,
                     "sudo": needs_sudo,
                 }
