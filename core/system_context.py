@@ -22,6 +22,9 @@ def system_context() -> dict:
     return {'machine_id': hashlib.sha256(identity.encode()).hexdigest()[:24],
             'hostname': platform.node(), 'os': release.get('PRETTY_NAME', platform.system()),
             'kernel': platform.release(), 'user': getpass.getuser(),
+            'os_id': release.get('ID', ''), 'os_version': release.get('VERSION_ID', ''),
+            'architecture': platform.machine(),
+            'container': 'container detected' if Path('/.dockerenv').exists() or Path('/run/.containerenv').exists() else 'not detected',
             'uid': os.getuid() if hasattr(os, 'getuid') else None}
 
 

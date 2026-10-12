@@ -7,3 +7,4 @@ __pycache__/
 # ONNX runtime session telemetry artifact.
 :memory:.ses
 reports/
+.logent_runtime/

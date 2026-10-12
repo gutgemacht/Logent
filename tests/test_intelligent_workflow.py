@@ -100,6 +100,8 @@ class EnhancedWorkflowTests(unittest.TestCase):
         o._history.record_occurrence.return_value = ('key', 'event')
         o._history.summary.return_value = {'seen': 1, 'solved': 0, 'solutions': []}
         o._history.related.return_value = []
+        o._history.diagnostic_candidates.return_value = []
+        o._history.case_records.return_value = []
         o._ui.show_history.return_value = []
         o._ui.choose_history_action.return_value = ('diagnose', None)
         o._diagnostic = Mock()

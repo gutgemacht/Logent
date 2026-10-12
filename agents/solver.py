@@ -17,6 +17,7 @@ commands, then returns either:
 from __future__ import annotations
 
 from .base import Agent
+from core.knowledge import trim_evidence, redact
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 _SYSTEM_PROMPT = """\
@@ -32,6 +33,8 @@ Raw JSON array only — no markdown, no preamble:
     "command":     "chmod +x /path/to/script.sh",
     "description": "Grant execute permission to the script",
     "expected_result": "The owner can execute the script",
+    "verification": "Rerun the approved permission check and test execution as the affected user",
+    "undo_command": "",
     "criticality": "warning",
     "sudo": true
   }
@@ -47,6 +50,20 @@ Use ONLY when truly insufficient data to suggest a safe fix:
   ]
 }
 
+━━━ RESPONSE FORMAT C (no applicable fix) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+If no safe applicable fix can be proposed, explain why:
+{"no_applicable_fix": true, "reason": "Specific missing evidence or constraint"}
+Do not return an unexplained empty array.
+
+━━━ RESPONSE FORMAT D (manual or mixed repair) ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{"description":"targeted remedy and its evidence", "commands":[],
+ "manual_steps":["specific action the user can take in the application"],
+ "verification":"how to retest the original operation"}
+Use this when repair requires an application UI, configuration supplied by the user,
+or an administrator action. Do not treat absence of shell commands as absence of help.
+Historical cases and their ratings are reference only; require the current confirmed
+symptom AND confirmed cause. Adapt stored commands to this environment and explain differences.
+
 ━━━ CRITICALITY LEVELS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Use EXACTLY one of these strings:
   "safe"    → completely harmless or read-only              (displayed in green)
@@ -57,6 +74,9 @@ Use EXACTLY one of these strings:
 ━━━ STRICT RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Return ONLY the JSON — nothing else.
    Solve the current confirmed diagnosis, not a historical error sharing its path.
+   Connection timeouts, refusals, DNS failures and port conflicts are network problems.
+   Do not propose chmod/chown/chgrp/setfacl for them. Use evidence about the current
+   endpoint, listener, route and name resolution; ask for more diagnostics if needed.
    A missing file is not a permissions problem: chmod/chown cannot restore a missing file.
    Before suggesting permission changes, current diagnostics must show the target exists
    and that the permissions are actually incorrect. Check symlink targets too.
@@ -65,6 +85,8 @@ Use EXACTLY one of these strings:
 3. Use targeted, minimal-impact fixes; avoid broad changes.
 4. Use Format B ONLY if you genuinely cannot proceed without extra data.
 5. If a command requires root/superuser privileges, set "sudo": true. Do NOT put the word 'sudo' inside the "command" string itself.
+6. Explain the expected change and verification for each command. Include undo_command only
+   when a targeted rollback is supported by the observed original state. Otherwise use an empty string.
 """
 
 
@@ -115,8 +137,8 @@ class SolverAgent(Agent):
         """
         # 1. Reinforce the strict JSON instruction at the end of the user prompt
         prompt = (
-            f"Original log error:\n{error_text}\n\n"
-            f"Diagnostic output:\n{diagnostic_output}\n\n"
+            f"Original log error:\n{redact(error_text)}\n\n"
+            f"Diagnostic output:\n{trim_evidence(diagnostic_output)}\n\n"
             f"Provide fix commands. REMEMBER: Return strictly raw JSON only. "
             f"No conversational preamble, no explanations, no markdown blocks."
         )
@@ -160,6 +182,14 @@ class SolverAgent(Agent):
         if isinstance(result, list):
             return self._normalise_fix_commands(result)
 
+        if result.get('manual_steps'):
+            steps = result['manual_steps']
+            if not isinstance(steps, list) or any(not isinstance(step, str) or not step.strip() for step in steps):
+                raise ValueError('Manual steps must be a non-empty list of instructions')
+            return {'manual_steps': steps, 'description': str(result.get('description', '')),
+                    'verification': str(result.get('verification', '')),
+                    'commands': self._normalise_fix_commands(result.get('commands', []))}
+
         # Normalise Format B (need_more_diagnostics)
         if result.get("need_more_diagnostics"):
             return {
@@ -175,6 +205,20 @@ class SolverAgent(Agent):
                 ],
             }
 
+        if result.get("no_applicable_fix") is True:
+            reason = result.get("reason")
+            if not isinstance(reason, str) or not reason.strip():
+                raise ValueError("No-applicable-fix response must explain why")
+            return {"no_applicable_fix": True, "reason": reason}
+
+        # Accept the common object wrapper without silently discarding its fixes.
+        if "commands" in result:
+            if not isinstance(result["commands"], list):
+                raise ValueError("Solver commands must be an array")
+            return self._normalise_fix_commands(result["commands"])
+        if not result.get("command"):
+            raise ValueError("Unrecognized solver response: expected fixes, more diagnostics, or an explained no-fix result")
+
         # Fallback: treat dict as a single-item list
         return self._normalise_fix_commands([result])
 
@@ -188,8 +232,8 @@ class SolverAgent(Agent):
         valid_criticalities = {"safe", "warning", "danger"}
         result = []
         for item in items:
-            if not isinstance(item, dict) or not item.get("command"):
-                continue
+            if not isinstance(item, dict) or not isinstance(item.get("command"), str) or not item["command"].strip():
+                raise ValueError("Every proposed fix must contain a non-empty command string")
             
             # Parse criticality
             crit = str(item.get("criticality", "safe")).lower()
@@ -208,6 +252,8 @@ class SolverAgent(Agent):
                     "command": str(item["command"]),
                     "description": str(item.get("description", "")),
                     "expected_result": str(item.get("expected_result", "")),
+                    "verification": str(item.get("verification", "")),
+                    "undo_command": str(item.get("undo_command", "")),
                     "criticality": crit,
                     "sudo": needs_sudo,
                 }

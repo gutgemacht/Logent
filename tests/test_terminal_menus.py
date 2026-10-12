@@ -1,5 +1,5 @@
 import os
-import select
+import selectors
 import subprocess
 import sys
 import time
@@ -25,12 +25,16 @@ print('TERMINAL_RESTORED=' + str(before == termios.tcgetattr(sys.stdin.fileno())
 '''
         child = subprocess.Popen([sys.executable, '-B', '-c', code], stdin=slave, stdout=slave, stderr=slave, env=dict(os.environ, TERM='xterm-256color'))
         os.close(slave)
+        # Chroma's temporary stores can allocate descriptors above select()'s
+        # FD_SETSIZE during a full suite. The PTY test must support those too.
+        poller = selectors.DefaultSelector()
+        poller.register(master, selectors.EVENT_READ)
         data = b''
         sent = False
         deadline = time.monotonic() + 5
         try:
             while time.monotonic() < deadline:
-                if select.select([master], [], [], 0.1)[0]:
+                if poller.select(0.1):
                     try:
                         chunk = os.read(master, 65536)
                     except OSError:
@@ -48,6 +52,7 @@ print('TERMINAL_RESTORED=' + str(before == termios.tcgetattr(sys.stdin.fileno())
             if child.poll() is None:
                 child.kill()
                 child.wait()
+            poller.close()
             os.close(master)
         self.assertEqual(child.returncode, 0, data.decode(errors='replace'))
         self.assertIn(b'TERMINAL_RESTORED=True', data)

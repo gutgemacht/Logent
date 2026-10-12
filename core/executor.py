@@ -11,6 +11,7 @@ Output is captured; stderr is retained for both successful and failed commands.
 from __future__ import annotations
 
 import subprocess
+import os
 
 from core.diagnostic_evidence import relevant_output
 from core.diagnostic_commands import diagnostic_argv, validate_diagnostic_commands
@@ -40,6 +41,7 @@ def run_command(command: str | list[str], timeout: int = 30, *, shell: bool = Tr
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=None if shell else dict(os.environ, LC_ALL='C'),
         )
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
@@ -50,8 +52,14 @@ def run_command(command: str | list[str], timeout: int = 30, *, shell: bool = Tr
             combined = f"{stdout}\n[stderr] {stderr}".strip()
         return result.returncode == 0, combined
 
-    except subprocess.TimeoutExpired:
-        return False, f"Command timed out after {timeout}s."
+    except subprocess.TimeoutExpired as exc:
+        def partial(value):
+            return value.decode(errors='replace') if isinstance(value, bytes) else value or ''
+        output = partial(exc.stdout).strip()
+        stderr = partial(exc.stderr).strip()
+        if stderr:
+            output = f'{output}\n[stderr] {stderr}'.strip()
+        return False, (output + f"\nCommand timed out after {timeout}s.").strip()
     except Exception as exc:  # noqa: BLE001
         return False, f"Execution error: {exc}"
 
@@ -63,6 +71,7 @@ def run_commands_collect(
     *,
     max_total_chars: int = 6000,
     context: str = "",
+    capture=None,
 ) -> str:
     """
     Run a list of command dicts sequentially and return combined output.
@@ -108,4 +117,8 @@ def run_commands_collect(
             ' '.join([context, item['command'], item.get('description', ''), item.get('expected_result', '')]))
         status = 'success' if success else 'failed'
         parts.append(f"{header}{status}\n{selected}")
+        if capture:
+            capture({'command': item['command'], 'success': success, 'full_output': output,
+                     'selected_output': selected, 'shortened': len(output) > allowance,
+                     'original_characters': len(output), 'selected_characters': len(selected)})
     return "\n\n".join(parts)

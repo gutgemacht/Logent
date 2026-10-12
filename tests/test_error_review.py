@@ -34,6 +34,7 @@ class ErrorReviewTests(unittest.TestCase):
         o._history.record_occurrence.side_effect = [('old', 'first'), ('new', 'second')]
         o._history.summary.return_value = {'seen': 1, 'solved': 0, 'solutions': []}
         o._history.related.return_value = [{'key': 'old', 'error': 'ERROR permission denied /etc/resolv.conf', 'summary': {'seen': 1, 'solved': 0, 'solutions': []}}]
+        o._history.diagnostic_candidates.return_value = []
         o._ui = Mock()
         o._ui.show_error_panel.side_effect = [False, True]
         o._ui.show_history.return_value = []

@@ -20,12 +20,15 @@ from __future__ import annotations
 import os
 import queue
 import re
+import logging
+import config
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from watchdog.events import FileModifiedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
+from core.watchdog_config import load_rules, rule_pattern
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -38,6 +41,7 @@ class ErrorEvent:
     filepath: str
     line: str
     timestamp: str
+    triggers: tuple[str, ...] = ()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -73,10 +77,19 @@ class LogEventHandler(FileSystemEventHandler):
         error_patterns: list[str],
         watched_files: frozenset[str],
         watched_dirs: frozenset[str],
+        rules_path: str | None = None,
     ) -> None:
         super().__init__()
         self._queue = error_queue
         self._patterns = [re.compile(p, re.IGNORECASE) for p in error_patterns]
+        self._pattern_labels = list(error_patterns)
+        self._exclude_patterns = []
+        self.event_callback = None
+        self._rules_path = rules_path
+        self._rules_signature = None
+        self._rules_error = None
+        self._rules_loaded_at = None
+        self._reload_rules()
         self._watched_files = watched_files
         self._watched_dirs = watched_dirs
         # filepath → last read byte offset
@@ -101,6 +114,11 @@ class LogEventHandler(FileSystemEventHandler):
 
     def _should_watch(self, filepath: str) -> bool:
         """Return True if *filepath* belongs to the monitored set."""
+        try:
+            Path(filepath).resolve().relative_to(Path(config.RUNTIME_PATH).resolve())
+            return False  # Never detect the monitor's own heartbeat and event trace.
+        except ValueError:
+            pass
         if filepath in self._watched_files:
             return True
         fp = Path(filepath)
@@ -114,6 +132,7 @@ class LogEventHandler(FileSystemEventHandler):
 
     def _scan_new_lines(self, filepath: str) -> None:
         """Read newly appended content and enqueue matching lines."""
+        self._reload_rules()
         # First time we see this file from a watched directory: seek to EOF
         if filepath not in self._positions:
             self._positions[filepath] = self._eof_offset(filepath)
@@ -124,17 +143,49 @@ class LogEventHandler(FileSystemEventHandler):
                 fh.seek(self._positions[filepath])
                 for raw_line in fh:
                     stripped = raw_line.rstrip("\r\n")
-                    if stripped and any(p.search(stripped) for p in self._patterns):
-                        self._queue.put(
-                            ErrorEvent(
+                    matched = tuple(label for label, pattern in zip(self._pattern_labels, self._patterns) if pattern.search(stripped)) if stripped else ()
+                    ignored = tuple(label for label, pattern in self._exclude_patterns if pattern.search(stripped)) if matched else ()
+                    if matched:
+                        timestamp = datetime.now().astimezone().isoformat()
+                        if self.event_callback:
+                            self.event_callback({'error': stripped, 'source': filepath, 'detected': timestamp,
+                                                 'triggers': list(matched), 'ignore_rules': list(ignored)}, ignored=bool(ignored))
+                    if matched and not ignored:
+                        self._queue.put(ErrorEvent(
                                 filepath=filepath,
                                 line=stripped,
-                                timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            )
-                        )
+                                timestamp=timestamp, triggers=matched,
+                            ))
                 self._positions[filepath] = fh.tell()
         except OSError:
             pass
+
+    def _reload_rules(self) -> None:
+        if not self._rules_path:
+            return
+        try:
+            path = Path(self._rules_path)
+            info = path.stat() if path.exists() else None
+            signature = (info.st_mtime_ns, info.st_size) if info else ('defaults',)
+            if signature == self._rules_signature:
+                return
+            rules = load_rules(path)
+            detect = [rule for rule in rules if rule['enabled'] and rule.get('action', 'Detect') == 'Detect']
+            patterns = [re.compile(rule_pattern(rule), re.IGNORECASE) for rule in detect]
+            self._patterns = patterns
+            self._pattern_labels = [rule['pattern'] for rule in detect]
+            self._exclude_patterns = [(rule['pattern'], re.compile(rule_pattern(rule), re.IGNORECASE))
+                                      for rule in rules if rule['enabled'] and rule.get('action') == 'Ignore']
+            self._rules_signature = signature
+            self._rules_error = None
+            self._rules_loaded_at = datetime.now().astimezone().isoformat()
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self._rules_error = str(exc)
+            logging.getLogger(__name__).warning('Could not reload watchdog rules; keeping previous rules: %s', exc)
+
+    def rules_status(self):
+        return {'detection_count': len(self._patterns), 'ignore_count': len(self._exclude_patterns),
+                'loaded_at': self._rules_loaded_at, 'error': self._rules_error}
 
     @staticmethod
     def _eof_offset(filepath: str) -> int:
@@ -160,7 +211,7 @@ class LogWatcher:
     Dir paths   → observer scheduled on the dir itself (recursive).
     """
 
-    def __init__(self, paths: list[str], error_patterns: list[str]) -> None:
+    def __init__(self, paths: list[str], error_patterns: list[str], rules_path: str | None = None) -> None:
         self._error_queue: queue.Queue[ErrorEvent] = queue.Queue()
 
         watched_files: set[str] = set()
@@ -180,6 +231,7 @@ class LogWatcher:
             error_patterns=error_patterns,
             watched_files=frozenset(watched_files),
             watched_dirs=frozenset(watched_dirs),
+            rules_path=rules_path,
         )
 
         self._observer = Observer()

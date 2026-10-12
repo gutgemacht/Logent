@@ -1,0 +1,29 @@
+echo "ERROR: mc is not installed." >> error.log
+
+echo "ERROR: screen is not installed." >> error.log
+
+echo "ERROR: Configuration file /tmp/logent-demo.conf does not exist." >> error.log
+
+echo "ERROR: Wrong permissions for /tmp/logent-demo.conf: mode 0777, expected 0644." >> error.log
+
+echo "ERROR: Permission denied while reading /tmp/logent-demo.conf." >> error.log
+
+echo "ERROR: Failed to write /tmp/logent-output.log: No space left on device." >> error.log
+
+echo "kernel: Out of memory: Kill process 18423 (python3)." >> error.log
+
+echo "ERROR: Connection refused while connecting to 127.0.0.1:8080." >> error.log
+
+echo "ERROR: Connection to 127.0.0.1:8080 timed out after 30 seconds." >> error.log
+
+echo "ERROR: Failed to resolve hostname api.example.invalid: Temporary failure in name resolution." >> error.log
+
+echo "ERROR: Failed to bind to 127.0.0.1:8080: Address already in use." >> error.log
+
+echo "ERROR: Failed to start logent-demo.service: Unit logent-demo.service not found." >> error.log
+
+echo "ERROR: Too many open files while accepting a new connection." >> error.log
+
+echo "Traceback: ModuleNotFoundError: No module named 'logent_demo_plugin'." >> error.log
+
+echo "kernel: watchdog: BUG: soft lockup - CPU#2 stuck for 26s!" >> error.log

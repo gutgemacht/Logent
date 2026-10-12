@@ -64,7 +64,7 @@ class DiagnosticEvidenceTests(unittest.TestCase):
         ui.show_command_output(evidence)
         for line in evidence.splitlines():
             self.assertIn(line, stream.getvalue())
-        self.assertIn('sent to LLM', stream.getvalue())
+        self.assertIn('evidence for assessment', stream.getvalue())
 
 
 if __name__ == '__main__':

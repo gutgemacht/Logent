@@ -1,0 +1,10 @@
+ERROR: Wrong permissions for /tmp/logent-test.conf: mode 0777, expected 0644.
+ERROR: Configuration file /tmp/logent-test.conf does not exist.
+ERROR: Permission denied while reading /tmp/logent-test.conf.
+ERROR: Cannot write to /tmp/logent-cache: Permission denied.
+ERROR: Failed to write /tmp/logent-output.log: No space left on device.
+ERROR: Connection refused while connecting to 127.0.0.1:8080.
+ERROR: Connection to 127.0.0.1:8080 timed out after 30 seconds.
+ERROR: Failed to resolve hostname api.example.invalid: Temporary failure in name resolution.
+ERROR: Failed to start logent-test.service: Unit logent-test.service not found.
+ERROR: Failed to bind to 127.0.0.1:8080: Address already in use.

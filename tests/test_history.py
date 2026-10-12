@@ -84,11 +84,16 @@ class HistoryFlowTests(unittest.TestCase):
         self.o._history.record_occurrence.return_value = ('key', 'occurrence')
         self.o._history.summary.return_value = {'seen': 1, 'solved': 0, 'solutions': []}
         self.o._history.related.return_value = []
+        self.o._history.diagnostic_candidates.return_value = []
         self.o._ui = Mock()
         self.o._ui.show_error_panel.return_value = True
         self.o._ui.show_history.return_value = []
         self.o._diagnostic = Mock()
+        self.o._diagnostic.diagnose.return_value = {'hypothesis':'permission problem', 'commands':[{'command':'id'}]}
+        self.o._diagnostic.verify.return_value = {'status':'confirmed', 'explanation':'diagnostic evidence', 'observations':[]}
         self.o._solver = Mock()
+        self.o._solver.solve.return_value = [{'command':'chmod 644 /tmp/file'}]
+        self.o._llm = lambda operation, label: operation()
         self.event = ErrorEvent('/tmp/log', 'ERROR denied', 'now')
 
     def test_initial_ignore_still_counts(self):
@@ -97,18 +102,19 @@ class HistoryFlowTests(unittest.TestCase):
         self.o._history.record_occurrence.assert_called_once_with(self.event)
         self.o._diagnostic.diagnose.assert_not_called()
 
+    @patch('core.orchestrator.run_commands_collect', return_value='$ id\nuid=1000')
     @patch('core.orchestrator.run_command', return_value=(True, ''))
-    def test_reuse_requires_approval_and_user_confirmation(self, execute):
+    def test_reuse_requires_approval_and_user_confirmation(self, execute, inspect):
         selected = {'id': 'saved', 'error_key': 'key', 'commands': [{'command': 'chmod 644 /tmp/file'}], 'notes': 'fix'}
         self.o._ui.choose_history_action.return_value = ('reuse', selected)
         self.o._ui.show_solution_panel.return_value = True
         self.o._ui.ask_outcome.return_value = 'no'
         self.o._ui.ask_save_solution.return_value = 'skip'
         self.o._handle_error(self.event)
-        self.o._diagnostic.diagnose.assert_not_called()
+        self.o._diagnostic.diagnose.assert_called_once()
         self.o._ui.show_solution_panel.assert_called_once()
         self.assertEqual(self.o._history.record_attempt.call_args.args[3], 'no')
-        self.assertEqual(self.o._history.record_attempt.call_args.args[2], 'saved')
+        self.assertEqual(self.o._history.record_attempt.call_args.args[2], 'saved')  # Identical action receives one fresh application rating after diagnosis.
 
     @patch('core.orchestrator.run_command')
     def test_custom_paste_is_not_executed_and_can_be_untested(self, execute):
@@ -120,8 +126,9 @@ class HistoryFlowTests(unittest.TestCase):
         self.o._history.save_solution.assert_called_once()
         self.assertEqual(self.o._history.record_attempt.call_args.args[3], 'unsure')
 
+    @patch('core.orchestrator.run_commands_collect', return_value='$ id\nuid=1000')
     @patch('core.orchestrator.run_command')
-    def test_reuse_denied_is_not_executed(self, execute):
+    def test_reuse_denied_is_not_executed(self, execute, inspect):
         self.o._ui.choose_history_action.return_value = ('reuse', {'commands': [{'command': 'chmod 644 /tmp/file'}]})
         self.o._ui.show_solution_panel.return_value = False
         self.o._handle_error(self.event)
@@ -148,5 +155,5 @@ class HistoryUiTests(unittest.TestCase):
         solution = {'id': 'id', 'commands': [], 'notes': 'Manual fix', 'helped': 0, 'failed': 0, 'unsure': 1, 'success_rate': None}
         candidates = ui.show_history({'seen': 4, 'solved': 2, 'solutions': [solution]}, [])
         self.assertEqual(candidates, [solution])
-        self.assertIn('Confirmed solved: 2', stream.getvalue())
+        self.assertIn('User-reported solved: 2', stream.getvalue())
         self.assertIn('untested', stream.getvalue())

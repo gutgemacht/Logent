@@ -35,6 +35,60 @@ class ReadOnlyDiagnosticsTests(unittest.TestCase):
             agent.diagnose('denied')
         self.assertEqual(agent.call.call_count, 2)
 
+    def test_missing_program_keeps_lookup_when_model_proposes_shell_fallback(self):
+        agent = DiagnosticAgent('test', 'http://localhost')
+        agent.call = Mock(return_value=json.dumps({'hypothesis': 'mc may be unavailable',
+            'commands': [{'command': 'command -v mc || echo missing'}]}))
+        plan = agent.diagnose('ERROR: mc is not installed.')
+        self.assertEqual(plan['commands'][0]['command'], 'which -- mc')
+        self.assertTrue(all(diagnostic_argv(item['command']) for item in plan['commands']))
+        self.assertEqual(agent.call.call_count, 1)
+        self.assertIn('shell operators', plan['rejected_commands'][0]['reason'])
+
+    def test_mixed_plan_preserves_safe_checks_without_running_pipeline(self):
+        agent = DiagnosticAgent('test', 'http://localhost')
+        agent.call = Mock(return_value=json.dumps({'hypothesis': 'Memory pressure',
+            'commands': [{'command': 'free -m'}, {'command': 'ps aux | head -n 10'},
+                         {'command': 'rm /tmp/cache'}]}))
+        plan = agent.diagnose('kernel: Out of memory: Kill process 123')
+        self.assertEqual([item['command'] for item in plan['commands']], ['free -m'])
+        self.assertEqual(len(plan['rejected_commands']), 2)
+
+    def test_retry_includes_specific_command_and_reason(self):
+        agent = DiagnosticAgent('test', 'http://localhost')
+        agent.call = Mock(side_effect=[
+            json.dumps({'hypothesis': 'Memory pressure', 'commands': [{'command': 'ps aux | head'}]}),
+            json.dumps({'hypothesis': 'Memory pressure', 'commands': [{'command': 'free -m'}]})])
+        agent.diagnose('kernel: Out of memory: Kill process 123')
+        retry = agent.call.call_args.args[0]
+        self.assertIn('Validation error:', retry)
+        self.assertIn('ps aux | head', retry)
+        self.assertIn('shell operators', retry)
+
+    def test_program_lookup_is_direct_and_rejects_options(self):
+        self.assertEqual(diagnostic_argv('which -- mc'), ['which', '--', 'mc'])
+        for command in ['which', 'which --read-functions mc', 'which mc || echo missing']:
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                diagnostic_argv(command)
+
+    def test_package_checks_are_read_only_and_restrict_options(self):
+        for command in ['dpkg-query --status screen', 'dpkg-query -s mc', 'apt-cache policy screen']:
+            self.assertTrue(diagnostic_argv(command))
+        for command in ['apt-get install screen', 'dpkg-query --admindir=/tmp -s screen', 'apt-cache gencaches', 'apt-cache -o Debug::NoLocking=1 policy screen']:
+            with self.assertRaises(ValueError):
+                diagnostic_argv(command)
+
+    def test_unsupported_optional_criteria_do_not_discard_valid_inspection(self):
+        agent = DiagnosticAgent('test', 'http://localhost')
+        agent.call = Mock(return_value=json.dumps({'hypothesis': 'mc may be unavailable',
+            'commands': [{'command': 'which -- mc'}],
+            'verification_checks': [{'kind': 'package_installed', 'expected': True}]}))
+        plan = agent.diagnose('ERROR: mc is not installed.')
+        self.assertEqual(plan['commands'][0]['command'], 'which -- mc')
+        self.assertEqual(plan['verification_checks'], [])
+        self.assertIn('Unsupported', plan['rejected_criteria'])
+        self.assertEqual(agent.call.call_count, 1)
+
     @patch('core.executor.run_command')
     def test_entire_batch_is_checked_before_execution(self, execute):
         with self.assertRaises(ValueError):

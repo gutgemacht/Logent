@@ -1,5 +1,76 @@
-Error: file /etc/resolv.conf has wrong permissions 777
-Error: file /etc/resolv.conf has wrong permissions 777
-Error: file /etc/resolv.conf has wrong file permissions 777. Please correct it now!
-Error: file /etc/resolv.conf has wrong file permissions 777. Please correct it nowecho Error: file /etc/resolv.conf has wrong file permissions 777. Please correct it now! >> error.logecho Error: file /etc/resolv.conf has wrong file permissions 777. Please correct it now! >> error.log
-Error: file /etc/resolv.conf has wrong file permissions 777. Please correct it now!
+ERROR: Wrong permissions for the file /etc/resolv.conf. Fit it.
+ERROR: Wrong permissions for the file /etc/resolv.conf. Fit it.
+ERROR: Wrong permissions for the file /etc/resolv.conf. Fit it.
+ERROR: Wrong permissions for the file /etc/resolv.conf. Fit it.
+ERROR: Wrong permissions for the file /etc/resolv.conf. Fit it.
+ERROR: Wrong permissions for the file /etc/resolv.conf. Fit it now.
+ERROR: Wrong permissions for the file /etc/resolv.conf. Fit it now.
+ERROR: Wrong permissions for the file /etc/resolv.conf. Fit it now.
+ERROR: Wrong permissions for the file /etc/resolv.conf. Fit it now.
+ERROR: Wrong permissions for the file /etc/resolv.conf 777. Fit it now.
+ERROR: Wrong permissions for the file /etc/resolv.conf 777. Fit it now.
+ERROR: Wrong permissions for the file /etc/resolv.conf 777. Fit it now.
+ERROR: File /etc/resolv.conf is not presented in the file system.
+ERROR: File /etc/resolv.conf is not presented in the file system.
+ERROR: File /etc/resolv.conf is not presented in the file system.
+ERROR: File /etc/resolv.conf is not presented in the file system.
+Warning: less ram and disk space.
+Error: less ram and disk space.
+Error: less ram and disk space.
+ERROR: Wrong permissions for the file /etc/resolv.conf 777. Fit it now.
+ERROR: Wrong permissions for the file /etc/resolv.conf 770. Fit it now.
+ERROR: Wrong permissions for /etc/resolv.conf. Recheck it.
+ERROR: Wrong permissions for /etc/resolv.conf. Recheck it and fix.
+ERROR: Wrong permissions for /etc/resolv.conf. Recheck it and fix.
+ERROR: Wrong permissions for /etc/resolv.conf. Recheck it and fix.
+ERROR: Wrong permissions for /etc/hosts. Recheck it and fix.
+ERROR: Wrong permissions for /etc/. Recheck it and fix.
+ERROR: Wrong permissions for /etc/. Recheck it and fix.
+ERROR: No free ramecho ERROR: Wrong permissions for /etc/. Recheck it and fix. >> error.log !
+ERROR: Wrong permissions for /tmp/logent-test.conf: mode 0777, expected 0644.
+ERROR: Configuration file /tmp/logent-test.conf does not exist.
+ERROR: Permission denied while reading /tmp/logent-test.conf.
+ERROR: Cannot write to /tmp/logent-cache: Permission denied.
+ERROR: Failed to write /tmp/logent-output.log: No space left on device.
+ERROR: Connection refused while connecting to 127.0.0.1:8080.
+ERROR: Connection to 127.0.0.1:8080 timed out after 30 seconds.
+ERROR: Failed to resolve hostname api.example.invalid: Temporary failure in name resolution.
+ERROR: Failed to start logent-test.service: Unit logent-test.service not found.
+ERROR: Failed to bind to 127.0.0.1:8080: Address already in use.
+kernel: Out of memory: Kill process 12345
+kernel: Out of memory: Kill process 12345
+kernel: Out of memory: Kill process 12345- Error 
+kernel: Out of memory: Kill process 12345
+ERROR: No free ramecho kernel: Out of memory: Kill process 12345
+ERROR: 
+ERROR: No free ramecho kernel: Out of RAM memory: Kill process 6247
+ERROR: No free ramecho kernel: Out of RAM memory: Kill process 10322 . High memory consumption!
+ERROR: No free ramecho kernel: Out of RAM memory: Kill process 10322 . High memory consumption!
+ERROR: mc is not installed.
+ERROR: mc is not installed.
+ERROR: mc is not installed.
+ERROR: mc is not installed.
+ERROR: mc is not installed.
+ERROR: mc is not installed.
+ERROR: screen is not installed.
+ERROR: curl is not installed.
+ERROR: mc is not installed.
+ERROR: screen is not installed.
+ERROR: Configuration file /tmp/logent-demo.conf does not exist.
+ERROR: Wrong permissions for /tmp/logent-demo.conf: mode 0777, expected 0644.
+ERROR: Permission denied while reading /tmp/logent-demo.conf.
+ERROR: Failed to write /tmp/logent-output.log: No space left on device.
+kernel: Out of memory: Kill process 18423 (python3).
+ERROR: Connection refused while connecting to 127.0.0.1:8080.
+ERROR: Connection to 127.0.0.1:8080 timed out after 30 seconds.
+ERROR: Failed to resolve hostname api.example.invalid: Temporary failure in name resolution.
+ERROR: Failed to bind to 127.0.0.1:8080: Address already in use.
+ERROR: Failed to start logent-demo.service: Unit logent-demo.service not found.
+ERROR: Too many open files while accepting a new connection.
+Traceback: ModuleNotFoundError: No module named 'logent_demo_plugin'.
+kernel: watchdog: BUG: soft lockup - CPU#2 stuck for 26s!
+ERROR: No free ram kernel: Out of RAM memory: Kill process 10322 . High memory consumption!
+ERROR: mc is not installed.
+ERROR: Connection to 127.0.0.1:8080 timed out after 30 seconds.
+ERROR: Failed to write /tmp/logent-output.log: No space left on device.
+ERROR: Failed to write /tmp/logent-output.log: No space left on device.
